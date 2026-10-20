@@ -14,6 +14,7 @@ const NAVIGATION = [
   { id: "chat", label: "Chat", icon: "⌘" },
   { id: "files", label: "Files", icon: "◇" },
   { id: "context", label: "Context", icon: "◫" },
+  { id: "terminal", label: "Terminal", icon: "›_" },
   { id: "sessions", label: "Sessions", icon: "▤" },
   { id: "models", label: "Models", icon: "⌁" },
   { id: "changes", label: "Changes", icon: "≡" },

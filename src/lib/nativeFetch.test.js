@@ -395,6 +395,16 @@ test("allows validated session create, prompt, command, and abort writes", async
     agent: "build",
   });
 
+  const shellHttp = createHttp({ status: 200, data: {}, headers: {} });
+  await createNativeFetch(shellHttp)(
+    sessionItemUrl("shell"),
+    jsonRequest({ command: "git status", agent: "build" }),
+  );
+  assert.deepEqual(shellHttp.calls[0].data, {
+    command: "git status",
+    agent: "build",
+  });
+
   const abortHttp = createHttp({ status: 200, data: true, headers: {} });
   await createNativeFetch(abortHttp)(
     sessionItemUrl("abort"),
@@ -696,6 +706,26 @@ test("rejects invalid write bodies, sessions, and oversized requests", async () 
       body: { command: "init", arguments: "" },
     },
     {
+      url: sessionItemUrl("shell"),
+      body: { command: "", agent: "build" },
+    },
+    {
+      url: sessionItemUrl("shell"),
+      body: { command: "ls\0", agent: "build" },
+    },
+    {
+      url: sessionItemUrl("shell"),
+      body: { command: "ls", agent: "bad agent" },
+    },
+    {
+      url: sessionItemUrl("shell"),
+      body: { command: "ls", agent: "build", extra: true },
+    },
+    {
+      url: sessionItemUrl("shell"),
+      body: { command: "ls" },
+    },
+    {
       url: sessionItemUrl("unknown"),
       body: { command: "init" },
     },
@@ -826,6 +856,12 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     arguments: "",
     model: "provider/model",
   });
+  await client.session.shell({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+    command: "git status",
+    agent: "build",
+  });
   await client.session.abort({ sessionID, directory: PROJECT_DIRECTORY });
   await client.session.messages({
     sessionID,
@@ -861,6 +897,7 @@ test("accepts the real SDK phase 2 request shapes", async () => {
       "POST /session",
       `POST /session/${sessionID}/prompt_async`,
       `POST /session/${sessionID}/command`,
+      `POST /session/${sessionID}/shell`,
       `POST /session/${sessionID}/abort`,
       `GET /session/${sessionID}/message`,
       "GET /config/providers",

@@ -4,6 +4,7 @@ const TABS = [
   { id: "chat", label: "Chat", icon: "⌘" },
   { id: "files", label: "Files", icon: "◇" },
   { id: "context", label: "Context", icon: "◫" },
+  { id: "terminal", label: "Terminal", icon: "›_" },
 ];
 
 export function WorkspaceTabs({

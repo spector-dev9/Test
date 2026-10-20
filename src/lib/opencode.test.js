@@ -377,6 +377,10 @@ test("sends prompts, commands, and abort requests with project scope", async () 
         calls.push(["command", parameters]);
         return fulfilled({});
       },
+      shell: async (parameters) => {
+        calls.push(["shell", parameters]);
+        return fulfilled({ parts: [] });
+      },
       abort: async (parameters) => {
         calls.push(["abort", parameters]);
         return fulfilled(true);
@@ -394,6 +398,9 @@ test("sends prompts, commands, and abort requests with project scope", async () 
     arguments: "smaller",
     model: { providerID: "provider", modelID: "model" },
     agent: "build",
+  });
+  await api.runProjectShell(PROJECT_DIRECTORY, "ses_test123", {
+    command: "  git status  ",
   });
   await api.abortSession(PROJECT_DIRECTORY, "ses_test123");
 
@@ -419,6 +426,15 @@ test("sends prompts, commands, and abort requests with project scope", async () 
         agent: "build",
       },
     ],
+    [
+      "shell",
+      {
+        sessionID: "ses_test123",
+        directory: PROJECT_DIRECTORY,
+        command: "git status",
+        agent: "build",
+      },
+    ],
     ["abort", { sessionID: "ses_test123", directory: PROJECT_DIRECTORY }],
   ]);
 
@@ -431,6 +447,12 @@ test("sends prompts, commands, and abort requests with project scope", async () 
       command: "bad command",
     }),
     /selected command is invalid/,
+  );
+  await assert.rejects(
+    api.runProjectShell(PROJECT_DIRECTORY, "ses_test123", {
+      command: "",
+    }),
+    /valid shell command/,
   );
 });
 

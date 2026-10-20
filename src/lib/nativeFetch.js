@@ -9,13 +9,14 @@ import {
   validateFilePatch,
 } from "./files.js";
 import { isAllowedProjectDirectory } from "./projectScope.js";
+import { validateTerminalCommand } from "./terminal.js";
 
 const HEALTH_PATH = "/global/health";
 const PROJECT_PATH = "/project";
 const PERMISSION_PATH = "/permission";
 const SESSION_PATH = "/session";
 const SESSION_STATUS_PATH = "/session/status";
-const SESSION_ITEM_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/(message|prompt_async|command|abort)$/;
+const SESSION_ITEM_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/(message|prompt_async|command|shell|abort)$/;
 const SESSION_RESOURCE_PATH = /^\/session\/(ses_[A-Za-z0-9]+)$/;
 const PERMISSION_REPLY_PATH = /^\/permission\/([A-Za-z0-9_-]{1,200})\/reply$/;
 const PROVIDERS_PATH = "/config/providers";
@@ -278,6 +279,32 @@ function validateCommandBody(body) {
   }
 }
 
+function validateShellBody(body) {
+  exactKeys(body, ["command", "agent", "model"]);
+
+  if (!validateTerminalCommand(body.command)) {
+    throw invalidRequest("requires a valid shell command.");
+  }
+
+  if (
+    typeof body.agent !== "string" ||
+    !AGENT_ID_PATTERN.test(body.agent)
+  ) {
+    throw invalidRequest("requires a valid agent.");
+  }
+
+  if (body.model !== undefined) {
+    exactKeys(body.model, ["providerID", "modelID"]);
+
+    if (
+      !isModelId(body.model.providerID) ||
+      !isModelId(body.model.modelID)
+    ) {
+      throw invalidRequest("rejected an invalid model.");
+    }
+  }
+}
+
 function validateSessionUpdateBody(body) {
   exactKeys(body, ["title", "time"]);
 
@@ -530,6 +557,12 @@ async function validateMutationRequest(request, url, method) {
   if (action === "command") {
     const data = await requestBody(request);
     validateCommandBody(data);
+    return { data };
+  }
+
+  if (action === "shell") {
+    const data = await requestBody(request);
+    validateShellBody(data);
     return { data };
   }
 

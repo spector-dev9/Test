@@ -23,6 +23,7 @@ import {
   runWithTimeout,
   validateOpenCodeBaseUrl,
 } from "./connection.js";
+import { validateTerminalCommand } from "./terminal.js";
 
 export { PROJECT_DIRECTORY };
 
@@ -742,6 +743,52 @@ export function createOpenCodeApi(client = opencode) {
       );
     },
 
+    async runProjectShell(
+      directory,
+      sessionID,
+      { command, agent = "build" } = {},
+      signal,
+    ) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+      const normalizedCommand = validateTerminalCommand(command);
+      const normalizedAgent = validateAgent(agent);
+
+      if (!normalizedCommand) {
+        throw invalidInput("Enter a valid shell command.");
+      }
+
+      if (!normalizedAgent) {
+        throw invalidInput("The selected agent is invalid.");
+      }
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.shell(
+            {
+              sessionID: id,
+              directory: scope,
+              command: normalizedCommand,
+              agent: normalizedAgent,
+            },
+            { signal: requestSignal },
+          ),
+        "The command could not be run.",
+        signal,
+      );
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        !Array.isArray(data.parts)
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return data;
+    },
+
     async abortSession(directory, sessionID, signal) {
       const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
@@ -984,6 +1031,9 @@ export const sendPromptAsync = (directory, sessionID, options, signal) =>
 
 export const sendCommand = (directory, sessionID, options, signal) =>
   opencodeApi.sendCommand(directory, sessionID, options, signal);
+
+export const runProjectShell = (directory, sessionID, options, signal) =>
+  opencodeApi.runProjectShell(directory, sessionID, options, signal);
 
 export const abortSession = (directory, sessionID, signal) =>
   opencodeApi.abortSession(directory, sessionID, signal);

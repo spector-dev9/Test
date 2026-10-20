@@ -8,6 +8,7 @@ import { ModelsView } from "./components/ModelsView";
 import { SessionsView } from "./components/SessionsView";
 import { SettingsView } from "./components/SettingsView";
 import { SidebarContent } from "./components/Sidebar";
+import { TerminalView } from "./components/TerminalView";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { useOpenCodeOverview } from "./hooks/useOpenCodeOverview";
 import { useOpenCodeProjects } from "./hooks/useOpenCodeProjects";
@@ -582,6 +583,17 @@ export default function App() {
                 onOpenChat={() => handleNavigate("chat")}
                 onNewSession={handleNewSession}
                 creatingSession={creatingSession}
+              />
+            </div>
+
+            <div className="view-pane" hidden={activeView !== "terminal"}>
+              <TerminalView
+                key={activeDirectory}
+                directory={activeDirectory}
+                connected={connected}
+                project={activeProject}
+                active={activeView === "terminal"}
+                agent={selectedSession?.agent}
               />
             </div>
 

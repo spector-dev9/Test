@@ -21,8 +21,10 @@ currently selected OpenCode project.
   after it has content.
 - Inspect real session context: message counts, model, latest-prompt token
   usage, reported context limit, and cumulative session cost.
-- Use Chat, Files, and Context tabs, a workspace `+` action menu, and the
-  drawer navigation on small screens.
+- Run shell commands in the active project through a dedicated terminal
+  session, with command history and clearable output.
+- Use Chat, Files, Context, and Terminal tabs, a workspace `+` action menu, and
+  the drawer navigation on small screens.
 - Inspect connection diagnostics and request-policy details.
 
 ## Requirements
@@ -54,8 +56,8 @@ npm run sync:android
 
 The test suite covers URL policy, native request validation, project discovery
 and scoping, session management, permissions, file path/patch safety, token
-context summaries, SDK request shapes, API error mapping, and workspace
-presentation helpers.
+context summaries, terminal command/output handling, SDK request shapes, API
+error mapping, and workspace presentation helpers.
 
 ## Android build
 
@@ -77,9 +79,9 @@ The app connects to `http://127.0.0.1:4096` by default. Set
 shapes still match the native transport allowlist. Native Android builds reject
 any other origin. Requests are restricted to health and project discovery,
 project-scoped session lists and messages, session create/update/delete,
-prompts, commands, abort, permissions and replies, providers, commands, VCS
-status/diff/apply, and project file listing, reading, and search. File writes
-are limited to validated single-file unified patches.
+prompts, commands, shell commands, abort, permissions and replies, providers,
+commands, VCS status/diff/apply, and project file listing, reading, and search.
+File writes are limited to validated single-file unified patches.
 
 Project-scoped requests must include exactly one `directory` query matching a
 project previously returned by the trusted project-list endpoint. The native
@@ -128,3 +130,6 @@ exception as part of debug-only work.
 - The keyboard/inset layout uses Capacitor SystemBars native handling and has
   been validated by lint, tests, and builds, but not yet on a physical Android
   device in this environment.
+- Terminal commands use the server's session shell endpoint, not an interactive
+  PTY. Full-screen/interactive programs, prompts, and streaming output are not
+  supported; commands are recorded in an `OpenCode Terminal` session.
