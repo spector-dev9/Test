@@ -1,5 +1,5 @@
 export const PROJECT_DIRECTORY =
-  "/data/user/0/com.opencode.mobile/files/workspace";
+  "/data/data/com.opencode.mobile/files/workspace";
 
 export const PROJECT_STORAGE_KEY = "opencode-mobile.project-id";
 

@@ -49,7 +49,7 @@ import okhttp3.ResponseBody;
 final class LocalServerManager {
     static final String URL = "http://127.0.0.1:4097";
     static final int PORT = 4097;
-    static final String WORKSPACE = "/data/user/0/com.opencode.mobile/files/workspace";
+    static final String WORKSPACE = "/data/data/com.opencode.mobile/files/workspace";
     static final String STATE_IDLE = "idle";
     static final String STATE_PREPARING = "preparing";
     static final String STATE_DOWNLOADING = "downloading";
