@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { connectionFailure } from "../lib/connection";
-import { checkConnection, listProjectSessions } from "../lib/opencode";
+import {
+  checkConnection,
+  createProjectSession,
+  listProjectSessions,
+} from "../lib/opencode";
 
 const initialHealth = {
   status: "loading",
@@ -20,7 +24,11 @@ export function useOpenCodeOverview() {
   const [health, setHealth] = useState(initialHealth);
   const [sessions, setSessions] = useState(initialSessions);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [createError, setCreateError] = useState(null);
   const requestId = useRef(0);
+  const createController = useRef(null);
+  const creatingRef = useRef(false);
 
   useEffect(() => {
     const currentRequest = requestId.current + 1;
@@ -85,6 +93,13 @@ export function useOpenCodeOverview() {
     };
   }, [refreshToken]);
 
+  useEffect(
+    () => () => {
+      createController.current?.abort();
+    },
+    [],
+  );
+
   const refresh = useCallback(() => {
     setHealth((previous) => ({
       status: previous.data ? "refreshing" : "loading",
@@ -101,5 +116,60 @@ export function useOpenCodeOverview() {
     setRefreshToken((value) => value + 1);
   }, []);
 
-  return { health, sessions, refresh };
+  const createSession = useCallback(async ({ title, model } = {}) => {
+    if (creatingRef.current) return null;
+
+    creatingRef.current = true;
+    setCreatingSession(true);
+    setCreateError(null);
+
+    const controller = new AbortController();
+    createController.current = controller;
+
+    try {
+      const session = await createProjectSession(
+        { title, model },
+        controller.signal,
+      );
+
+      setSessions((previous) => ({
+        status: "ready",
+        data: [
+          session,
+          ...previous.data.filter((item) => item.id !== session.id),
+        ],
+        error: null,
+        errorKind: null,
+      }));
+
+      return session;
+    } catch (error) {
+      if (error?.kind === "aborted") return null;
+
+      const failure = connectionFailure(
+        error,
+        "The session could not be created.",
+      );
+      setCreateError(failure);
+      return null;
+    } finally {
+      creatingRef.current = false;
+      createController.current = null;
+      setCreatingSession(false);
+    }
+  }, []);
+
+  const clearCreateError = useCallback(() => {
+    setCreateError(null);
+  }, []);
+
+  return {
+    health,
+    sessions,
+    refresh,
+    createSession,
+    creatingSession,
+    createError,
+    clearCreateError,
+  };
 }

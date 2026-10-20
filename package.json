@@ -8,7 +8,8 @@
     "build": "node ./node_modules/vite/bin/vite.js build",
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "preview": "vite preview",
-    "test": "node --test src/lib/connection.test.js src/lib/nativeFetch.test.js src/lib/opencode.test.js"
+    "sync:android": "node ./node_modules/@capacitor/cli/bin/capacitor sync android",
+    "test": "node --test src/lib/connection.test.js src/lib/nativeFetch.test.js src/lib/opencode.test.js src/lib/workspace.test.js"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

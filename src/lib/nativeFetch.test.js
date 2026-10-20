@@ -4,6 +4,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { CONNECTION_ERROR_KINDS } from "./connection.js";
 import {
   createNativeFetch,
+  MAX_REQUEST_BYTES,
   MAX_RESPONSE_BYTES,
 } from "./nativeFetch.js";
 import { PROJECT_DIRECTORY } from "./project.js";
@@ -110,14 +111,14 @@ test("accepts the real SDK health and session request shapes", async () => {
   );
 });
 
-test("rejects non-GET methods before contacting Capacitor", async () => {
-  for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
+test("rejects unsupported methods before contacting Capacitor", async () => {
+  for (const method of ["PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
     const http = createHttp();
     const nativeFetch = createNativeFetch(http);
 
     await assert.rejects(
       nativeFetch(HEALTH_URL, { method }),
-      /only allows GET requests/,
+      /request method/,
     );
     assert.equal(http.calls.length, 0);
   }
@@ -161,7 +162,7 @@ test("rejects missing, wrong, duplicate, or extra session parameters", async () 
 
     await assert.rejects(
       nativeFetch(url),
-      /project session directory/,
+      /(project directory|unsupported query parameter)/,
     );
     assert.equal(http.calls.length, 0);
   }
@@ -280,4 +281,315 @@ test("rejects malformed data and accepts bodyless 204 responses", async () => {
   const response = await createNativeFetch(emptyHttp)(HEALTH_URL);
   assert.equal(response.status, 204);
   assert.equal(await response.text(), "");
+});
+
+function sessionItemUrl(
+  action,
+  {
+    sessionID = "ses_test123",
+    directory = PROJECT_DIRECTORY,
+    query = {},
+  } = {},
+) {
+  const url = new URL(
+    `/session/${sessionID}/${action}`,
+    "http://127.0.0.1:4096",
+  );
+  url.searchParams.set("directory", directory);
+
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, String(value));
+  }
+
+  return url.href;
+}
+
+function jsonRequest(body) {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
+test("allows validated session create, prompt, command, and abort writes", async () => {
+  const createHttpClient = createHttp({
+    status: 200,
+    data: { id: "ses_test123", directory: PROJECT_DIRECTORY },
+    headers: { "content-type": "application/json" },
+  });
+  const createResponse = await createNativeFetch(createHttpClient)(
+    sessionUrl(),
+    jsonRequest({
+      title: "Mobile session",
+      model: { id: "model", providerID: "provider" },
+    }),
+  );
+  assert.equal(createResponse.status, 200);
+  assert.equal(createHttpClient.calls[0].method, "POST");
+  assert.deepEqual(createHttpClient.calls[0].data, {
+    title: "Mobile session",
+    model: { id: "model", providerID: "provider" },
+  });
+
+  const promptHttp = createHttp({ status: 204, data: "", headers: {} });
+  const promptResponse = await createNativeFetch(promptHttp)(
+    sessionItemUrl("prompt_async"),
+    jsonRequest({
+      parts: [{ type: "text", text: "Inspect the project." }],
+      model: { providerID: "provider", modelID: "model" },
+      agent: "build",
+    }),
+  );
+  assert.equal(promptResponse.status, 204);
+  assert.deepEqual(promptHttp.calls[0].data, {
+    parts: [{ type: "text", text: "Inspect the project." }],
+    model: { providerID: "provider", modelID: "model" },
+    agent: "build",
+  });
+
+  const commandHttp = createHttp({ status: 200, data: {}, headers: {} });
+  await createNativeFetch(commandHttp)(
+    sessionItemUrl("command"),
+    jsonRequest({
+      command: "init",
+      arguments: "make it smaller",
+      model: "provider/model",
+      agent: "build",
+    }),
+  );
+  assert.deepEqual(commandHttp.calls[0].data, {
+    command: "init",
+    arguments: "make it smaller",
+    model: "provider/model",
+    agent: "build",
+  });
+
+  const abortHttp = createHttp({ status: 200, data: true, headers: {} });
+  await createNativeFetch(abortHttp)(
+    sessionItemUrl("abort"),
+    { method: "POST" },
+  );
+  assert.equal(abortHttp.calls[0].method, "POST");
+  assert.equal(abortHttp.calls[0].data, undefined);
+});
+
+test("allows the phase 2 read endpoints", async () => {
+  const urls = [
+    sessionItemUrl("message", { query: { limit: 200 } }),
+    "http://127.0.0.1:4096/session/status?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4096/config/providers?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4096/command?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4096/vcs/status?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4096/vcs/diff?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY) +
+      "&mode=git&context=3",
+  ];
+
+  for (const url of urls) {
+    const http = createHttp({ status: 200, data: "[]", headers: {} });
+    const response = await createNativeFetch(http)(url);
+
+    assert.equal(response.status, 200);
+    assert.equal(http.calls.length, 1);
+    assert.equal(http.calls[0].method, "GET");
+  }
+});
+
+test("rejects invalid write bodies, sessions, and oversized requests", async () => {
+  const cases = [
+    {
+      url: sessionUrl(),
+      body: { title: "", model: { id: "model", providerID: "provider" } },
+    },
+    {
+      url: sessionUrl(),
+      body: { title: "ok", extra: true },
+    },
+    {
+      url: sessionUrl(),
+      body: { title: "ok", model: { id: "../model", providerID: "provider" } },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: { parts: [] },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [{ type: "text", text: "hi" }],
+        tools: { bash: true },
+      },
+    },
+    {
+      url: sessionItemUrl("command"),
+      body: { command: "bad command", arguments: "" },
+    },
+    {
+      url: sessionItemUrl("command", { sessionID: "ses_bad-id" }),
+      body: { command: "init", arguments: "" },
+    },
+    {
+      url: sessionItemUrl("unknown"),
+      body: { command: "init" },
+    },
+    {
+      url: sessionItemUrl("prompt_async", {
+        directory: "/tmp/elsewhere",
+      }),
+      body: { parts: [{ type: "text", text: "hi" }] },
+    },
+  ];
+
+  for (const item of cases) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(item.url, jsonRequest(item.body)),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
+  }
+
+  const oversizedHttp = createHttp();
+  await assert.rejects(
+    createNativeFetch(oversizedHttp)(
+      sessionItemUrl("prompt_async"),
+      jsonRequest({
+        parts: [
+          {
+            type: "text",
+            text: "x".repeat(MAX_REQUEST_BYTES + 1),
+          },
+        ],
+      }),
+    ),
+    /oversized request/,
+  );
+  assert.equal(oversizedHttp.calls.length, 0);
+
+  const nonJsonHttp = createHttp();
+  await assert.rejects(
+    createNativeFetch(nonJsonHttp)(sessionUrl(), {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "title",
+    }),
+    /JSON content type/,
+  );
+  assert.equal(nonJsonHttp.calls.length, 0);
+});
+
+test("rejects invalid read query combinations", async () => {
+  const urls = [
+    sessionItemUrl("message", { query: { limit: 500 } }),
+    sessionItemUrl("message", { query: { before: "msg_1" } }),
+    "http://127.0.0.1:4096/vcs/diff?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4096/vcs/diff?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY) +
+      "&mode=git&context=21",
+    "http://127.0.0.1:4096/vcs/diff?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY) +
+      "&mode=working",
+  ];
+
+  for (const url of urls) {
+    const http = createHttp();
+    await assert.rejects(createNativeFetch(http)(url), TypeError);
+    assert.equal(http.calls.length, 0);
+  }
+});
+
+test("accepts the real SDK phase 2 request shapes", async () => {
+  const calls = [];
+  const http = {
+    request: async (options) => {
+      calls.push(options);
+      const path = new URL(options.url).pathname;
+      let data = [];
+
+      if (path === "/session" && options.method === "POST") {
+        data = {
+          id: "ses_test123",
+          directory: PROJECT_DIRECTORY,
+          title: "SDK session",
+        };
+      } else if (path === "/config/providers") {
+        data = { providers: [], default: {} };
+      } else if (path === "/session/status") {
+        data = {};
+      }
+
+      return {
+        status: 200,
+        data,
+        headers: { "content-type": "application/json" },
+      };
+    },
+  };
+  const client = createOpencodeClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetch: createNativeFetch(http),
+  });
+  const sessionID = "ses_test123";
+  const model = { providerID: "provider", modelID: "model" };
+
+  await client.session.create({
+    directory: PROJECT_DIRECTORY,
+    title: "SDK session",
+    model: { id: model.modelID, providerID: model.providerID },
+  });
+  await client.session.promptAsync({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+    model,
+    parts: [{ type: "text", text: "Hello" }],
+  });
+  await client.session.command({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+    command: "init",
+    arguments: "",
+    model: "provider/model",
+  });
+  await client.session.abort({ sessionID, directory: PROJECT_DIRECTORY });
+  await client.session.messages({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+    limit: 200,
+  });
+  await client.config.providers({ directory: PROJECT_DIRECTORY });
+  await client.command.list({ directory: PROJECT_DIRECTORY });
+  await client.vcs.status({ directory: PROJECT_DIRECTORY });
+  await client.vcs.diff({
+    directory: PROJECT_DIRECTORY,
+    mode: "git",
+    context: 3,
+  });
+
+  assert.deepEqual(
+    calls.map((call) => `${call.method} ${new URL(call.url).pathname}`),
+    [
+      "POST /session",
+      `POST /session/${sessionID}/prompt_async`,
+      `POST /session/${sessionID}/command`,
+      `POST /session/${sessionID}/abort`,
+      `GET /session/${sessionID}/message`,
+      "GET /config/providers",
+      "GET /command",
+      "GET /vcs/status",
+      "GET /vcs/diff",
+    ],
+  );
+
+  for (const call of calls) {
+    assert.equal(
+      new URL(call.url).searchParams.get("directory"),
+      PROJECT_DIRECTORY,
+    );
+  }
 });

@@ -1,29 +1,86 @@
-# React + Vite
+# OpenCode Mobile
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A Capacitor Android client for a local OpenCode server. The app connects to the
+exact loopback origin `http://127.0.0.1:4096` and is scoped to this project's
+workspace.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Create and open project sessions.
+- Read conversations and send prompts asynchronously, with polling for replies.
+- Stop a running agent and retry a failed send.
+- Run project slash commands from the composer.
+- Choose an OpenCode model for new prompts and sessions.
+- Review uncommitted VCS files and patches for this project.
+- Inspect connection diagnostics and request-policy details.
 
-## React Compiler
+## Requirements
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js 22 or newer.
+- An OpenCode server running on `http://127.0.0.1:4096`.
+- For Android builds: JDK 21 and the Android SDK.
 
-## Expanding the ESLint configuration
+## Development
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```sh
+npm ci
+npm run dev
+```
 
-## Connection
+The browser build talks to the server with `fetch`. The server may not return
+CORS headers for browser origins, so successful browser access depends on the
+server's CORS policy. The Android build uses native `CapacitorHttp` and does not
+depend on browser CORS.
 
-The app connects to the OpenCode API at `http://127.0.0.1:4096` by default. Set `VITE_OPENCODE_URL` at build time only when it matches the native transport allowlist. Native Android builds reject any origin, path, or query other than the exact loopback origin used by the app.
+## Checks
 
-Browser requests have a finite timeout and are cancelled when the view is replaced or unmounted. Native Android requests keep the Capacitor HTTP transport with its own 10-second connect timeout and 30-second read timeout.
+```sh
+npm test
+npm run lint
+npm run build
+npm run sync:android
+```
+
+The test suite covers URL policy, native request validation, SDK request
+shapes, API error mapping, and workspace presentation helpers.
+
+## Android build
+
+```sh
+npm run build
+npm run sync:android
+cd android
+./gradlew assembleDebug
+```
+
+The GitHub Actions workflow in `.github/workflows/android-debug-apk.yml` builds,
+verifies, and uploads `opencode-mobile-debug.apk` for pushes to `main` and manual
+runs.
+
+## Connection policy
+
+The app connects to `http://127.0.0.1:4096` by default. Set
+`VITE_OPENCODE_URL` at build time only when the resulting origin, path, and query
+shapes still match the native transport allowlist. Native Android builds reject
+any other origin. Requests are restricted to health, project sessions, session
+messages, prompts, commands, abort, providers, commands, and VCS status/diff.
+
+Browser requests have a finite timeout and are cancelled when the view is
+replaced or unmounted. Native Android requests use the Capacitor HTTP transport
+with a 10-second connect timeout, a 30-second read timeout, and a 5 MiB response
+limit.
+
+The server URL and project directory are compiled into the app. Changing either
+requires a deliberate source and native-policy change followed by a rebuild.
+No OpenCode credentials are stored by the app.
 
 ## Release policy
 
-The Android workflow builds a debug APK only. Debug builds permit cleartext HTTP only for loopback (`localhost` and `127.0.0.1`) through the debug network security config.
+The Android workflow builds a debug APK only. Debug builds permit cleartext HTTP
+only for loopback (`localhost` and `127.0.0.1`) through the debug network
+security config.
 
-Release builds intentionally do not allow cleartext HTTP. A release build needs a separately designed secure connection strategy, such as HTTPS with a trusted certificate, before it can connect to OpenCode. Do not add a release cleartext exception as part of debug-only work.
-
+Release builds intentionally do not allow cleartext HTTP. A release build needs
+a separately designed secure connection strategy, such as HTTPS with a trusted
+certificate, before it can connect to OpenCode. Do not add a release cleartext
+exception as part of debug-only work.
