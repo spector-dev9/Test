@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CONNECTION_ERROR_KINDS } from "../lib/connection";
 import {
   authorizeGitHubCopilot,
+  completeGitHubCopilot,
   listConnectedProviders,
 } from "../lib/opencode";
 import {
@@ -14,7 +16,12 @@ import {
 
 const COPILOT_ID = "github-copilot";
 const POLL_INTERVAL_MS = 2500;
-const MAX_POLL_ATTEMPTS = 120;
+const MAX_POLL_ATTEMPTS = 240;
+const RETRYABLE_AUTH_KINDS = new Set([
+  CONNECTION_ERROR_KINDS.NETWORK,
+  CONNECTION_ERROR_KINDS.TIMEOUT,
+  CONNECTION_ERROR_KINDS.UNKNOWN,
+]);
 
 export function GitHubCard({
   directory,
@@ -50,6 +57,9 @@ export function GitHubCard({
   const [pushNotice, setPushNotice] = useState("");
   const pollTimer = useRef(null);
   const pollAttempts = useRef(0);
+  const authController = useRef(null);
+  const authGeneration = useRef(0);
+  const mountedRef = useRef(true);
   const parsedRepository = useMemo(
     () => parseRepositoryUrl(repoUrl),
     [repoUrl],
@@ -66,6 +76,22 @@ export function GitHubCard({
       pollTimer.current = null;
     }
   }, []);
+
+  const stopAuthAttempt = useCallback(() => {
+    authGeneration.current += 1;
+    authController.current?.abort();
+    authController.current = null;
+    stopPolling();
+  }, [stopPolling]);
+
+  const finishCopilot = useCallback(() => {
+    stopAuthAttempt();
+    setAuth(null);
+    setAuthBusy(false);
+    setAuthError("");
+    setProviders({ status: "ready", connected: true, error: "" });
+    onProvidersChanged?.();
+  }, [onProvidersChanged, stopAuthAttempt]);
 
   const refreshProviders = useCallback(async () => {
     if (!native || !connected || !directory) {
@@ -88,8 +114,9 @@ export function GitHubCard({
       });
 
       if (list.includes(COPILOT_ID)) {
+        stopAuthAttempt();
         setAuth(null);
-        stopPolling();
+        setAuthBusy(false);
       }
     } catch (failure) {
       setProviders({
@@ -98,7 +125,7 @@ export function GitHubCard({
         error: failure?.message || "GitHub sign-in status is unavailable.",
       });
     }
-  }, [connected, directory, native, stopPolling]);
+  }, [connected, directory, native, stopAuthAttempt]);
 
   const refreshRepo = useCallback(async () => {
     if (!native || !directory) return;
@@ -116,7 +143,14 @@ export function GitHubCard({
     }
   }, [directory, native]);
 
-  useEffect(() => stopPolling, [stopPolling]);
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      stopAuthAttempt();
+    };
+  }, [stopAuthAttempt]);
 
   useEffect(() => {
     if (!native || !connected || !directory) return undefined;
@@ -132,8 +166,9 @@ export function GitHubCard({
         });
 
         if (list.includes(COPILOT_ID)) {
+          stopAuthAttempt();
           setAuth(null);
-          stopPolling();
+          setAuthBusy(false);
         }
       })
       .catch((failure) => {
@@ -148,7 +183,7 @@ export function GitHubCard({
     return () => {
       cancelled = true;
     };
-  }, [connected, directory, native, stopPolling]);
+  }, [connected, directory, native, stopAuthAttempt]);
 
   useEffect(() => {
     if (!native || !directory) return undefined;
@@ -176,19 +211,33 @@ export function GitHubCard({
   }, [directory, native]);
 
   async function startCopilot() {
+    stopAuthAttempt();
     setAuthBusy(true);
     setAuthError("");
+    setAuth(null);
+
+    const generation = authGeneration.current;
+    const controller = new AbortController();
+    authController.current = controller;
 
     try {
-      const result = await authorizeGitHubCopilot(directory);
+      const result = await authorizeGitHubCopilot(
+        directory,
+        controller.signal,
+      );
+
+      if (!mountedRef.current || generation !== authGeneration.current) {
+        return;
+      }
+
       setAuth(result);
       pollAttempts.current = 0;
-      stopPolling();
       pollTimer.current = window.setInterval(async () => {
         pollAttempts.current += 1;
 
         if (pollAttempts.current > MAX_POLL_ATTEMPTS) {
-          stopPolling();
+          stopAuthAttempt();
+          setAuth(null);
           setAuthError("GitHub sign-in timed out. Start the sign-in again.");
           return;
         }
@@ -196,26 +245,72 @@ export function GitHubCard({
         try {
           const list = await listConnectedProviders(directory);
 
+          if (
+            !mountedRef.current ||
+            generation !== authGeneration.current
+          ) {
+            return;
+          }
+
           if (list.includes(COPILOT_ID)) {
-            stopPolling();
-            setAuth(null);
-            setProviders({ status: "ready", connected: true, error: "" });
-            onProvidersChanged?.();
+            finishCopilot();
           }
         } catch {
           return;
         }
       }, POLL_INTERVAL_MS);
+
+      completeGitHubCopilot(directory, controller.signal)
+        .then(() => {
+          if (
+            !mountedRef.current ||
+            generation !== authGeneration.current
+          ) {
+            return;
+          }
+
+          finishCopilot();
+        })
+        .catch((failure) => {
+          if (
+            !mountedRef.current ||
+            generation !== authGeneration.current
+          ) {
+            return;
+          }
+
+          if (
+            failure?.kind === CONNECTION_ERROR_KINDS.ABORTED ||
+            RETRYABLE_AUTH_KINDS.has(failure?.kind)
+          ) {
+            return;
+          }
+
+          stopAuthAttempt();
+          setAuth(null);
+          setAuthError(
+            failure?.message || "GitHub sign-in could not be completed.",
+          );
+        });
     } catch (failure) {
+      if (!mountedRef.current || generation !== authGeneration.current) {
+        return;
+      }
+
+      stopAuthAttempt();
+      setAuthBusy(false);
       setAuthError(failure?.message || "GitHub sign-in could not be started.");
     } finally {
-      setAuthBusy(false);
+      if (mountedRef.current && generation === authGeneration.current) {
+        setAuthBusy(false);
+      }
     }
   }
 
   function cancelCopilot() {
-    stopPolling();
+    stopAuthAttempt();
     setAuth(null);
+    setAuthBusy(false);
     setAuthError("");
   }
 
@@ -355,7 +450,8 @@ export function GitHubCard({
             Open the GitHub device page
           </a>
           <p className="panel-note">
-            Waiting for GitHub approval. This page updates automatically.
+            Waiting for GitHub approval. Keep this screen open; the app will
+            update automatically.
           </p>
         </div>
       ) : null}

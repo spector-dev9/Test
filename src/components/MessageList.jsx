@@ -10,6 +10,55 @@ function ToolLine({ tool }) {
   );
 }
 
+function textSegments(text) {
+  const pattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
+  const segments = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({
+        type: "text",
+        value: text.slice(lastIndex, match.index),
+      });
+    }
+
+    segments.push({
+      type: "code",
+      language:
+        match[1].trim().split(/\s+/)[0]?.slice(0, 24) || "code",
+      value: match[2].replace(/\n$/, ""),
+    });
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ type: "text", value: text.slice(lastIndex) });
+  }
+
+  return segments;
+}
+
+function MessageText({ text }) {
+  return (
+    <div className="message-text">
+      {textSegments(text).map((segment, index) =>
+        segment.type === "code" ? (
+          <div className="message-code" key={`code-${index}`}>
+            <div className="message-code-head">
+              <span>{segment.language}</span>
+            </div>
+            <pre><code>{segment.value}</code></pre>
+          </div>
+        ) : (
+          <span key={`text-${index}`}>{segment.value}</span>
+        ),
+      )}
+    </div>
+  );
+}
+
 export function MessageList({ messages, phase }) {
   return (
     <div className="message-list">
@@ -33,9 +82,7 @@ export function MessageList({ messages, phase }) {
             ) : null}
           </div>
 
-          {message.text ? (
-            <div className="message-text">{message.text}</div>
-          ) : null}
+          {message.text ? <MessageText text={message.text} /> : null}
 
           {message.attachments?.length > 0 ? (
             <div className="message-attachments">

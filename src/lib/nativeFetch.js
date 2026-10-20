@@ -32,7 +32,7 @@ const PERMISSION_REPLY_PATH = /^\/permission\/([A-Za-z0-9_-]{1,200})\/reply$/;
 const PROVIDERS_PATH = "/config/providers";
 const PROVIDER_PATH = "/provider";
 const PROVIDER_AUTH_PATH = "/provider/auth";
-const PROVIDER_OAUTH_PATH = /^\/provider\/([a-z0-9-]+)\/oauth\/authorize$/;
+const PROVIDER_OAUTH_PATH = /^\/provider\/([a-z0-9-]+)\/oauth\/(authorize|callback)$/;
 const COMMANDS_PATH = "/command";
 const VCS_STATUS_PATH = "/vcs/status";
 const VCS_DIFF_PATH = "/vcs/diff";
@@ -354,6 +354,14 @@ function validateGitHubAuthorizeBody(body) {
   }
 }
 
+function validateGitHubCallbackBody(body) {
+  exactKeys(body, ["method"]);
+
+  if (body.method !== 0) {
+    throw invalidRequest("rejected an unsupported sign-in method.");
+  }
+}
+
 function validateShellBody(body) {
   exactKeys(body, ["command", "agent", "model"]);
 
@@ -630,7 +638,13 @@ async function validateMutationRequest(request, url, method) {
     }
 
     const data = await requestBody(request);
-    validateGitHubAuthorizeBody(data);
+
+    if (oauthMatch[2] === "callback") {
+      validateGitHubCallbackBody(data);
+    } else {
+      validateGitHubAuthorizeBody(data);
+    }
+
     return { data };
   }
 

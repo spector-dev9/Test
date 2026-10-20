@@ -1116,6 +1116,30 @@ export function createOpenCodeApi(client = opencode) {
       };
     },
 
+    async completeGitHubCopilot(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.provider.oauth.callback(
+            {
+              providerID: "github-copilot",
+              directory: scope,
+              method: 0,
+            },
+            { signal: requestSignal },
+          ),
+        "GitHub sign-in could not be completed.",
+        signal,
+      );
+
+      if (data !== true) {
+        throw unexpectedResponse();
+      }
+
+      return true;
+    },
+
     async listCommands(directory, signal) {
       const scope = validateProjectDirectory(directory);
       const data = await runRequest(
@@ -1248,6 +1272,9 @@ export const listConnectedProviders = (directory, signal) =>
 
 export const authorizeGitHubCopilot = (directory, signal) =>
   opencodeApi.authorizeGitHubCopilot(directory, signal);
+
+export const completeGitHubCopilot = (directory, signal) =>
+  opencodeApi.completeGitHubCopilot(directory, signal);
 
 export const listCommands = (directory, signal) =>
   opencodeApi.listCommands(directory, signal);

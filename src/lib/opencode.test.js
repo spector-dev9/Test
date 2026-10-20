@@ -671,6 +671,10 @@ test("loads connected providers and starts GitHub Copilot sign-in", async () => 
             instructions: "Enter code: ABCD-1234",
           });
         },
+        callback: async (parameters) => {
+          calls.push(["callback", parameters]);
+          return fulfilled(true);
+        },
       },
     },
   });
@@ -687,6 +691,10 @@ test("loads connected providers and starts GitHub Copilot sign-in", async () => 
       method: "auto",
     },
   );
+  assert.equal(
+    await api.completeGitHubCopilot(PROJECT_DIRECTORY),
+    true,
+  );
   assert.deepEqual(calls, [
     ["providers", { directory: PROJECT_DIRECTORY }],
     [
@@ -696,6 +704,14 @@ test("loads connected providers and starts GitHub Copilot sign-in", async () => 
         directory: PROJECT_DIRECTORY,
         method: 0,
         inputs: { deploymentType: "github.com" },
+      },
+    ],
+    [
+      "callback",
+      {
+        providerID: "github-copilot",
+        directory: PROJECT_DIRECTORY,
+        method: 0,
       },
     ],
   ]);

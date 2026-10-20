@@ -808,7 +808,7 @@ test("rejects unsafe file paths, searches, and patches", async () => {
   }
 });
 
-test("allows only the GitHub Copilot OAuth authorize request", async () => {
+test("allows the GitHub Copilot OAuth authorize request", async () => {
   const url = new URL(
     "/provider/github-copilot/oauth/authorize",
     "http://127.0.0.1:4097",
@@ -839,6 +839,51 @@ test("allows only the GitHub Copilot OAuth authorize request", async () => {
     method: 0,
     inputs: { deploymentType: "github.com" },
   });
+});
+
+test("allows the GitHub Copilot OAuth callback request", async () => {
+  const url = new URL(
+    "/provider/github-copilot/oauth/callback",
+    "http://127.0.0.1:4097",
+  );
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+
+  const http = createHttp({
+    status: 200,
+    data: true,
+    headers: { "content-type": "application/json" },
+  });
+  const response = await createNativeFetch(http)(
+    url.href,
+    jsonRequest({ method: 0 }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.json(), true);
+  assert.equal(http.calls.length, 1);
+  assert.equal(http.calls[0].method, "POST");
+  assert.deepEqual(http.calls[0].data, { method: 0 });
+});
+
+test("rejects invalid GitHub Copilot OAuth callback requests", async () => {
+  const url = new URL(
+    "/provider/github-copilot/oauth/callback",
+    "http://127.0.0.1:4097",
+  );
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+
+  for (const body of [
+    { method: 1 },
+    { method: 0, code: "unexpected" },
+    { method: 0, inputs: {} },
+  ]) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(url.href, jsonRequest(body)),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
+  }
 });
 
 test("rejects invalid write bodies, sessions, and oversized requests", async () => {
