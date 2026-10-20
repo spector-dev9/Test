@@ -62,6 +62,9 @@ export function TerminalView({ directory, connected, project, active }) {
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("connecting");
   const [error, setError] = useState(null);
+  const terminalTitle = project
+    ? `${projectLabel(project)} terminal`
+    : "OpenCode Terminal";
   const containerRef = useRef(null);
   const terminalRef = useRef(null);
   const fitRef = useRef(null);
@@ -276,9 +279,7 @@ export function TerminalView({ directory, connected, project, active }) {
 
       try {
         const pty = await createProjectTerminal(directory, {
-          title: project
-            ? `${projectLabel(project)} terminal`
-            : "OpenCode Terminal",
+          title: terminalTitle,
         });
 
         if (cancelled) {
@@ -307,7 +308,7 @@ export function TerminalView({ directory, connected, project, active }) {
       cancelled = true;
       teardown(socketRef.current, ptyRef.current, true);
     };
-  }, [attempt, connected, directory, enabled, project]);
+  }, [attempt, connected, directory, enabled, terminalTitle]);
 
   function reconnect() {
     setError(null);
