@@ -71,6 +71,7 @@ export function ChatView({
     [commands.data, draft],
   );
   const showCommands =
+    Boolean(session) &&
     connected &&
     draft.startsWith("/") &&
     commandMatches.length > 0;
@@ -81,7 +82,7 @@ export function ChatView({
   const permissionPending = permissions.length > 0;
   const canSubmit =
     connected &&
-    !creatingSession &&
+    Boolean(session) &&
     phase === "idle" &&
     !permissionPending &&
     draft.trim().length > 0;
@@ -171,15 +172,13 @@ export function ChatView({
 
   function handleKeyDown(event) {
     if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing
+      event.key === "Enter" &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.nativeEvent.isComposing
     ) {
-      return;
+      event.preventDefault();
+      submitDraft();
     }
-
-    event.preventDefault();
-    submitDraft();
   }
 
   function chooseCommand(command) {
@@ -433,15 +432,15 @@ export function ChatView({
             onFocus={handleComposerFocus}
             rows={1}
             maxLength={MAX_COMPOSER_CHARS}
-            disabled={!connected || creatingSession || permissionPending}
+            disabled={!connected || !session || permissionPending}
             placeholder={
-              !connected
-                ? "Reconnect to the local OpenCode server"
-                : creatingSession
-                  ? "Starting a new session…"
-                  : permissionPending
+              connected
+                ? session
+                  ? permissionPending
                     ? "Respond to the permission request above"
                     : "Ask OpenCode to inspect, explain, or change this project…"
+                  : "Create a session to start"
+                : "Reconnect to the local OpenCode server"
             }
             aria-label="Prompt"
             aria-describedby="composer-status"
@@ -450,21 +449,19 @@ export function ChatView({
             <span id="composer-status">
               {!connected
                 ? "Server offline · reconnect to send"
-                : creatingSession
-                  ? "Starting a new session…"
-                  : !session
-                    ? "Enter to send · starts a new session"
-                    : permissionPending
-                      ? "Permission required · review the prompt above"
-                      : phase === "sending"
-                        ? "Sending prompt…"
-                        : phase === "working"
-                          ? "Agent working · you can stop it"
-                          : phase === "stopping"
-                            ? "Stopping the agent…"
-                            : draft.length > MAX_COMPOSER_CHARS - 2000
-                              ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
-                              : "Enter to send · Shift + Enter for a new line · / for commands"}
+                : !session
+                  ? "Create a session to start"
+                  : permissionPending
+                    ? "Permission required · review the prompt above"
+                    : phase === "sending"
+                      ? "Sending prompt…"
+                      : phase === "working"
+                        ? "Agent working · you can stop it"
+                        : phase === "stopping"
+                          ? "Stopping the agent…"
+                          : draft.length > MAX_COMPOSER_CHARS - 2000
+                            ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
+                            : "Ctrl/⌘ + Enter to send · type / for commands"}
             </span>
             <div className="composer-actions">
               {phase === "working" ? (
