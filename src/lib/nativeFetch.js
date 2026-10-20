@@ -4,12 +4,16 @@ import {
   NATIVE_OPENCODE_ORIGIN,
   OpenCodeConnectionError,
 } from "./connection.js";
-import { PROJECT_DIRECTORY } from "./project.js";
+import { isAllowedProjectDirectory } from "./projectScope.js";
 
 const HEALTH_PATH = "/global/health";
+const PROJECT_PATH = "/project";
+const PERMISSION_PATH = "/permission";
 const SESSION_PATH = "/session";
 const SESSION_STATUS_PATH = "/session/status";
 const SESSION_ITEM_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/(message|prompt_async|command|abort)$/;
+const SESSION_RESOURCE_PATH = /^\/session\/(ses_[A-Za-z0-9]+)$/;
+const PERMISSION_REPLY_PATH = /^\/permission\/([A-Za-z0-9_-]{1,200})\/reply$/;
 const PROVIDERS_PATH = "/config/providers";
 const COMMANDS_PATH = "/command";
 const VCS_STATUS_PATH = "/vcs/status";
@@ -19,6 +23,9 @@ const MODEL_REF_PATTERN = /^[A-Za-z0-9._:-]+\/[A-Za-z0-9._:-]+$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
+const MAX_SESSION_TITLE_CHARS = 120;
+const MAX_PERMISSION_MESSAGE_CHARS = 2000;
+const PERMISSION_REPLIES = ["once", "always", "reject"];
 
 export const MAX_REQUEST_BYTES = 256 * 1024;
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -113,9 +120,9 @@ function requireProjectQuery(url, extraKeys = []) {
 
   if (
     directoryEntries.length !== 1 ||
-    directoryEntries[0][1] !== PROJECT_DIRECTORY
+    !isAllowedProjectDirectory(directoryEntries[0][1])
   ) {
-    throw invalidRequest("requires the project directory.");
+    throw invalidRequest("requires a known project directory.");
   }
 
   for (const [key] of entries) {
@@ -249,6 +256,51 @@ function validateCommandBody(body) {
   }
 }
 
+function validateSessionUpdateBody(body) {
+  exactKeys(body, ["title", "time"]);
+
+  if (body.title === undefined && body.time === undefined) {
+    throw invalidRequest("requires a session change.");
+  }
+
+  if (body.title !== undefined) {
+    if (
+      typeof body.title !== "string" ||
+      !body.title.trim() ||
+      body.title.trim().length > MAX_SESSION_TITLE_CHARS
+    ) {
+      throw invalidRequest("requires a valid session title.");
+    }
+  }
+
+  if (body.time !== undefined) {
+    exactKeys(body.time, ["archived"]);
+
+    if (
+      !Number.isSafeInteger(body.time.archived) ||
+      body.time.archived < 0
+    ) {
+      throw invalidRequest("requires a valid archive time.");
+    }
+  }
+}
+
+function validatePermissionReplyBody(body) {
+  exactKeys(body, ["reply", "message"]);
+
+  if (!PERMISSION_REPLIES.includes(body.reply)) {
+    throw invalidRequest("requires a valid permission response.");
+  }
+
+  if (
+    body.message !== undefined &&
+    (typeof body.message !== "string" ||
+      body.message.length > MAX_PERMISSION_MESSAGE_CHARS)
+  ) {
+    throw invalidRequest("rejected an invalid permission message.");
+  }
+}
+
 async function requestBody(request, { allowEmpty = false } = {}) {
   const contentLength = Number(request.headers.get("content-length"));
   if (
@@ -286,6 +338,18 @@ function validateReadRequest(url) {
     if (url.search) {
       throw invalidRequest("rejected a health query.");
     }
+    return;
+  }
+
+  if (url.pathname === PROJECT_PATH) {
+    if (url.search) {
+      throw invalidRequest("rejected a project query.");
+    }
+    return;
+  }
+
+  if (url.pathname === PERMISSION_PATH) {
+    requireProjectQuery(url);
     return;
   }
 
@@ -348,8 +412,34 @@ function validateReadRequest(url) {
   throw invalidRequest("rejected the request path.");
 }
 
-async function validateWriteRequest(request, url) {
+async function validateMutationRequest(request, url, method) {
   requireProjectQuery(url);
+
+  if (method === "DELETE") {
+    if (SESSION_RESOURCE_PATH.test(url.pathname)) {
+      return {};
+    }
+
+    throw invalidRequest("rejected the request path.");
+  }
+
+  if (method === "PATCH") {
+    const sessionMatch = SESSION_RESOURCE_PATH.exec(url.pathname);
+    if (!sessionMatch) {
+      throw invalidRequest("rejected the request path.");
+    }
+
+    const data = await requestBody(request);
+    validateSessionUpdateBody(data);
+    return { data };
+  }
+
+  const permissionMatch = PERMISSION_REPLY_PATH.exec(url.pathname);
+  if (permissionMatch) {
+    const data = await requestBody(request);
+    validatePermissionReplyBody(data);
+    return { data };
+  }
 
   if (url.pathname === SESSION_PATH) {
     const data = await requestBody(request);
@@ -404,8 +494,8 @@ async function validateRequest(request) {
     return;
   }
 
-  if (method === "POST") {
-    return validateWriteRequest(request, url);
+  if (method === "POST" || method === "PATCH" || method === "DELETE") {
+    return validateMutationRequest(request, url, method);
   }
 
   throw invalidRequest("rejected the request method.");

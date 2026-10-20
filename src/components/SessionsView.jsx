@@ -1,7 +1,12 @@
+import { useMemo, useState } from "react";
+import { projectLabel } from "../lib/project";
+import { filterSessions } from "../lib/workspace";
+import { SessionDialog } from "./SessionDialog";
 import { SessionList } from "./SessionList";
 
 export function SessionsView({
   sessions,
+  project,
   selectedSessionId,
   onSelectSession,
   onNewSession,
@@ -10,7 +15,37 @@ export function SessionsView({
   onRetry,
   connected,
   sessionActionsDisabled,
+  showArchived,
+  archivedCount,
+  onToggleArchived,
+  onRenameSession,
+  onArchiveSession,
+  onDeleteSession,
 }) {
+  const [query, setQuery] = useState("");
+  const [managedSession, setManagedSession] = useState(null);
+  const filteredSessions = useMemo(
+    () => filterSessions(sessions.data, query),
+    [query, sessions.data],
+  );
+  const hasSearch = Boolean(query.trim());
+  const noMatches =
+    hasSearch &&
+    sessions.data.length > 0 &&
+    filteredSessions.length === 0;
+
+  async function renameSession(sessionID, title) {
+    return onRenameSession(sessionID, title);
+  }
+
+  async function archiveSession(sessionID, archived) {
+    return onArchiveSession(sessionID, archived);
+  }
+
+  async function deleteSession(sessionID) {
+    return onDeleteSession(sessionID);
+  }
+
   return (
     <section className="page-view" aria-labelledby="sessions-heading">
       <div className="page-heading">
@@ -18,7 +53,9 @@ export function SessionsView({
           <p className="eyebrow">WORKSPACE</p>
           <h1 id="sessions-heading">Sessions</h1>
           <p className="subtitle">
-            Conversations saved for this project on your local server.
+            Conversations saved in{" "}
+            <strong>{project ? projectLabel(project) : "this project"}</strong>{" "}
+            on your local server.
           </p>
         </div>
         <button
@@ -39,7 +76,7 @@ export function SessionsView({
             <h2>Project sessions</h2>
             <p>
               {sessions.status === "ready"
-                ? `${sessions.data.length} session${sessions.data.length === 1 ? "" : "s"}`
+                ? `${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"} shown`
                 : "Reading sessions…"}
             </p>
           </div>
@@ -53,16 +90,71 @@ export function SessionsView({
           </button>
         </div>
 
-        <SessionList
-          sessions={sessions}
-          canRetry={canRefresh}
-          onRetry={onRetry}
-          selectedSessionId={selectedSessionId}
-          onSelectSession={onSelectSession}
-          disabled={sessionActionsDisabled}
-          large
-        />
+        <div className="session-toolbar">
+          <label className="session-search">
+            <span>Search sessions</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Title, agent, or model"
+              aria-label="Search sessions"
+            />
+            {query ? (
+              <button
+                type="button"
+                className="search-clear"
+                onClick={() => setQuery("")}
+                aria-label="Clear session search"
+              >
+                ×
+              </button>
+            ) : null}
+          </label>
+
+          <button
+            type="button"
+            className={`filter-button${showArchived ? " active" : ""}`}
+            onClick={onToggleArchived}
+            aria-pressed={showArchived}
+          >
+            {showArchived ? "Hide archived" : "Show archived"}
+            {archivedCount > 0 ? (
+              <span className="filter-count">{archivedCount}</span>
+            ) : null}
+          </button>
+        </div>
+
+        {noMatches ? (
+          <div className="empty-panel session-search-empty">
+            <strong>No sessions match “{query.trim()}”.</strong>
+            <span>Try a different title, agent, or model.</span>
+          </div>
+        ) : (
+          <SessionList
+            sessions={{ ...sessions, data: filteredSessions }}
+            canRetry={canRefresh}
+            onRetry={onRetry}
+            selectedSessionId={selectedSessionId}
+            onSelectSession={onSelectSession}
+            onManageSession={setManagedSession}
+            disabled={sessionActionsDisabled}
+            large
+          />
+        )}
       </div>
+
+      {managedSession ? (
+        <SessionDialog
+          key={managedSession.id}
+          session={managedSession}
+          disabled={sessionActionsDisabled}
+          onClose={() => setManagedSession(null)}
+          onRename={renameSession}
+          onArchive={archiveSession}
+          onDelete={deleteSession}
+        />
+      ) : null}
     </section>
   );
 }

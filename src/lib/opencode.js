@@ -1,6 +1,13 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { nativeFetch } from "./nativeFetch.js";
-import { PROJECT_DIRECTORY } from "./project.js";
+import {
+  PROJECT_DIRECTORY,
+  normalizeProjectDirectory,
+} from "./project.js";
+import {
+  isAllowedProjectDirectory,
+  registerProjectDirectories,
+} from "./projectScope.js";
 import {
   BROWSER_REQUEST_TIMEOUT_MS,
   CONNECTION_ERROR_KINDS,
@@ -13,11 +20,15 @@ import {
 export { PROJECT_DIRECTORY };
 
 const SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]+$/;
+const PERMISSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
+const MAX_SESSION_TITLE_CHARS = 120;
+const MAX_PERMISSION_MESSAGE_CHARS = 2000;
 const MESSAGE_PAGE_LIMIT = 200;
+const PERMISSION_REPLIES = ["once", "always", "reject"];
 
 const configuredBaseUrl = import.meta.env?.VITE_OPENCODE_URL;
 export const OPENCODE_BASE_URL = (
@@ -106,6 +117,121 @@ function validateSessionId(sessionID) {
   }
 
   return sessionID;
+}
+
+function validateProjectDirectory(directory) {
+  const normalized = normalizeProjectDirectory(directory);
+
+  if (!normalized || !isAllowedProjectDirectory(normalized)) {
+    throw invalidInput("The project directory is invalid.");
+  }
+
+  return normalized;
+}
+
+function validateSessionTitle(title) {
+  if (typeof title !== "string" || !title.trim()) {
+    throw invalidInput("Session titles cannot be empty.");
+  }
+
+  const trimmed = title.trim();
+  if (trimmed.length > MAX_SESSION_TITLE_CHARS) {
+    throw invalidInput(
+      `Session titles are limited to ${MAX_SESSION_TITLE_CHARS} characters.`,
+    );
+  }
+
+  return trimmed;
+}
+
+function validatePermissionId(requestID) {
+  if (
+    typeof requestID !== "string" ||
+    !PERMISSION_ID_PATTERN.test(requestID)
+  ) {
+    throw invalidInput("The permission request identifier is invalid.");
+  }
+
+  return requestID;
+}
+
+function validatePermissionReply(reply, message) {
+  if (!PERMISSION_REPLIES.includes(reply)) {
+    throw invalidInput("The permission response is invalid.");
+  }
+
+  if (message == null) {
+    return { reply };
+  }
+
+  if (
+    typeof message !== "string" ||
+    message.length > MAX_PERMISSION_MESSAGE_CHARS
+  ) {
+    throw invalidInput("The permission message is invalid.");
+  }
+
+  const trimmed = message.trim();
+  return trimmed ? { reply, message: trimmed } : { reply };
+}
+
+function normalizeProject(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.id !== "string" ||
+    !data.id ||
+    data.id.length > 200
+  ) {
+    throw unexpectedResponse();
+  }
+
+  const worktree = normalizeProjectDirectory(data.worktree);
+  if (!worktree) throw unexpectedResponse();
+
+  const project = { id: data.id, worktree };
+
+  if (typeof data.name === "string" && data.name.trim()) {
+    project.name = data.name.trim().slice(0, 120);
+  }
+
+  if (data.vcs === "git") {
+    project.vcs = "git";
+  }
+
+  return project;
+}
+
+function normalizePermission(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.id !== "string" ||
+    !PERMISSION_ID_PATTERN.test(data.id) ||
+    typeof data.sessionID !== "string" ||
+    !SESSION_ID_PATTERN.test(data.sessionID) ||
+    typeof data.permission !== "string" ||
+    !data.permission.trim()
+  ) {
+    throw unexpectedResponse();
+  }
+
+  const patterns = Array.isArray(data.patterns)
+    ? data.patterns
+        .filter((pattern) => typeof pattern === "string")
+        .slice(0, 20)
+    : [];
+  const always = Array.isArray(data.always)
+    ? data.always.filter((pattern) => typeof pattern === "string").slice(0, 20)
+    : [];
+
+  return {
+    id: data.id,
+    sessionID: data.sessionID,
+    permission: data.permission.trim().slice(0, 200),
+    patterns,
+    always,
+  };
 }
 
 function validateModel(model) {
@@ -260,12 +386,45 @@ export function createOpenCodeApi(client = opencode) {
       ).then(validateHealthPayload);
     },
 
-    async listProjectSessions(signal) {
+    async listProjects(signal) {
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.project.list(
+            {},
+            { signal: requestSignal },
+          ),
+        "Projects could not be loaded.",
+        signal,
+      );
+
+      const projects = requireArray(data)
+        .flatMap((row) => {
+          try {
+            return [normalizeProject(row)];
+          } catch {
+            return [];
+          }
+        })
+        .filter(
+          (project, index, list) =>
+            list.findIndex((item) => item.id === project.id) === index,
+        );
+
+      registerProjectDirectories(
+        projects.map((project) => project.worktree),
+      );
+
+      return projects;
+    },
+
+    async listProjectSessions(directory, signal) {
+      const scope = validateProjectDirectory(directory);
       const data = await runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.session.list(
-            { directory: PROJECT_DIRECTORY },
+            { directory: scope },
             { signal: requestSignal },
           ),
         "Sessions could not be loaded.",
@@ -273,17 +432,18 @@ export function createOpenCodeApi(client = opencode) {
       );
 
       return requireArray(data).filter(
-        (session) => session?.directory === PROJECT_DIRECTORY,
+        (session) => session?.directory === scope,
       );
     },
 
-    async createProjectSession({ title, model } = {}, signal) {
+    async createProjectSession(directory, { title, model } = {}, signal) {
+      const scope = validateProjectDirectory(directory);
       const normalizedModel = validateModel(model);
       const body = {
-        directory: PROJECT_DIRECTORY,
+        directory: scope,
         title:
           typeof title === "string" && title.trim()
-            ? title.trim().slice(0, 120)
+            ? title.trim().slice(0, MAX_SESSION_TITLE_CHARS)
             : "New mobile session",
       };
 
@@ -306,7 +466,7 @@ export function createOpenCodeApi(client = opencode) {
         !data ||
         typeof data !== "object" ||
         typeof data.id !== "string" ||
-        data.directory !== PROJECT_DIRECTORY
+        data.directory !== scope
       ) {
         throw unexpectedResponse();
       }
@@ -314,7 +474,121 @@ export function createOpenCodeApi(client = opencode) {
       return data;
     },
 
-    async listSessionMessages(sessionID, signal) {
+    async updateSession(
+      directory,
+      sessionID,
+      { title, archived } = {},
+      signal,
+    ) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+      const update = { sessionID: id, directory: scope };
+
+      if (title !== undefined) {
+        update.title = validateSessionTitle(title);
+      }
+
+      if (archived !== undefined) {
+        if (
+          !Number.isSafeInteger(archived) ||
+          archived < 0
+        ) {
+          throw invalidInput("The session archive time is invalid.");
+        }
+
+        update.time = { archived };
+      }
+
+      if (update.title === undefined && update.time === undefined) {
+        throw invalidInput("No session changes were provided.");
+      }
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.update(update, { signal: requestSignal }),
+        "The session could not be updated.",
+        signal,
+      );
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.id !== id ||
+        data.directory !== scope
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return data;
+    },
+
+    async deleteSession(directory, sessionID, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+
+      return runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.delete(
+            { sessionID: id, directory: scope },
+            { signal: requestSignal },
+          ),
+        "The session could not be deleted.",
+        signal,
+      );
+    },
+
+    async listPermissions(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.permission.list(
+            { directory: scope },
+            { signal: requestSignal },
+          ),
+        "Permission requests could not be loaded.",
+        signal,
+      );
+
+      return requireArray(data).flatMap((row) => {
+        try {
+          return [normalizePermission(row)];
+        } catch {
+          return [];
+        }
+      });
+    },
+
+    async replyPermission(
+      directory,
+      requestID,
+      { reply, message } = {},
+      signal,
+    ) {
+      const scope = validateProjectDirectory(directory);
+      const id = validatePermissionId(requestID);
+      const body = validatePermissionReply(reply, message);
+
+      return runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.permission.reply(
+            {
+              requestID: id,
+              directory: scope,
+              ...body,
+            },
+            { signal: requestSignal },
+          ),
+        "The permission response could not be sent.",
+        signal,
+      );
+    },
+
+    async listSessionMessages(directory, sessionID, signal) {
+      const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
       const data = await runRequest(
         client,
@@ -322,7 +596,7 @@ export function createOpenCodeApi(client = opencode) {
           currentClient.session.messages(
             {
               sessionID: id,
-              directory: PROJECT_DIRECTORY,
+              directory: scope,
               limit: MESSAGE_PAGE_LIMIT,
             },
             { signal: requestSignal },
@@ -337,12 +611,13 @@ export function createOpenCodeApi(client = opencode) {
       );
     },
 
-    async getSessionStatuses(signal) {
+    async getSessionStatuses(directory, signal) {
+      const scope = validateProjectDirectory(directory);
       const data = await runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.session.status(
-            { directory: PROJECT_DIRECTORY },
+            { directory: scope },
             { signal: requestSignal },
           ),
         "Session status could not be loaded.",
@@ -357,10 +632,12 @@ export function createOpenCodeApi(client = opencode) {
     },
 
     async sendPromptAsync(
+      directory,
       sessionID,
       { text, model, agent } = {},
       signal,
     ) {
+      const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
       const normalizedModel = validateModel(model);
       const normalizedAgent = validateAgent(agent);
@@ -384,7 +661,7 @@ export function createOpenCodeApi(client = opencode) {
           currentClient.session.promptAsync(
             {
               sessionID: id,
-              directory: PROJECT_DIRECTORY,
+              directory: scope,
               ...body,
             },
             { signal: requestSignal },
@@ -395,10 +672,12 @@ export function createOpenCodeApi(client = opencode) {
     },
 
     async sendCommand(
+      directory,
       sessionID,
       { command, arguments: args, model, agent } = {},
       signal,
     ) {
+      const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
       const name = validateCommand(command);
       const normalizedArguments = validateCommandArguments(args);
@@ -423,7 +702,7 @@ export function createOpenCodeApi(client = opencode) {
           currentClient.session.command(
             {
               sessionID: id,
-              directory: PROJECT_DIRECTORY,
+              directory: scope,
               ...body,
             },
             { signal: requestSignal },
@@ -433,14 +712,15 @@ export function createOpenCodeApi(client = opencode) {
       );
     },
 
-    async abortSession(sessionID, signal) {
+    async abortSession(directory, sessionID, signal) {
+      const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
 
       return runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.session.abort(
-            { sessionID: id, directory: PROJECT_DIRECTORY },
+            { sessionID: id, directory: scope },
             { signal: requestSignal },
           ),
         "The agent could not be stopped.",
@@ -448,12 +728,13 @@ export function createOpenCodeApi(client = opencode) {
       );
     },
 
-    async listProviders(signal) {
+    async listProviders(directory, signal) {
+      const scope = validateProjectDirectory(directory);
       const data = await runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.config.providers(
-            { directory: PROJECT_DIRECTORY },
+            { directory: scope },
             { signal: requestSignal },
           ),
         "Models could not be loaded.",
@@ -473,12 +754,13 @@ export function createOpenCodeApi(client = opencode) {
       return data;
     },
 
-    async listCommands(signal) {
+    async listCommands(directory, signal) {
+      const scope = validateProjectDirectory(directory);
       const data = await runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.command.list(
-            { directory: PROJECT_DIRECTORY },
+            { directory: scope },
             { signal: requestSignal },
           ),
         "Commands could not be loaded.",
@@ -488,12 +770,13 @@ export function createOpenCodeApi(client = opencode) {
       return requireArray(data);
     },
 
-    async getVcsStatus(signal) {
+    async getVcsStatus(directory, signal) {
+      const scope = validateProjectDirectory(directory);
       const data = await runRequest(
         client,
         (currentClient, requestSignal) =>
           currentClient.vcs.status(
-            { directory: PROJECT_DIRECTORY },
+            { directory: scope },
             { signal: requestSignal },
           ),
         "Changes could not be loaded.",
@@ -503,7 +786,13 @@ export function createOpenCodeApi(client = opencode) {
       return requireArray(data);
     },
 
-    async getVcsDiff({ mode = "git", context = 3 } = {}, signal) {
+    async getVcsDiff(
+      directory,
+      { mode = "git", context = 3 } = {},
+      signal,
+    ) {
+      const scope = validateProjectDirectory(directory);
+
       if (!["git", "branch"].includes(mode)) {
         throw invalidInput("The requested diff mode is invalid.");
       }
@@ -521,7 +810,7 @@ export function createOpenCodeApi(client = opencode) {
         (currentClient, requestSignal) =>
           currentClient.vcs.diff(
             {
-              directory: PROJECT_DIRECTORY,
+              directory: scope,
               mode,
               context,
             },
@@ -541,35 +830,50 @@ export const opencodeApi = createOpenCodeApi();
 export const checkConnection = (signal) =>
   opencodeApi.checkConnection(signal);
 
-export const listProjectSessions = (signal) =>
-  opencodeApi.listProjectSessions(signal);
+export const listProjects = (signal) =>
+  opencodeApi.listProjects(signal);
 
-export const createProjectSession = (options, signal) =>
-  opencodeApi.createProjectSession(options, signal);
+export const listProjectSessions = (directory, signal) =>
+  opencodeApi.listProjectSessions(directory, signal);
 
-export const listSessionMessages = (sessionID, signal) =>
-  opencodeApi.listSessionMessages(sessionID, signal);
+export const createProjectSession = (directory, options, signal) =>
+  opencodeApi.createProjectSession(directory, options, signal);
 
-export const getSessionStatuses = (signal) =>
-  opencodeApi.getSessionStatuses(signal);
+export const updateSession = (directory, sessionID, options, signal) =>
+  opencodeApi.updateSession(directory, sessionID, options, signal);
 
-export const sendPromptAsync = (sessionID, options, signal) =>
-  opencodeApi.sendPromptAsync(sessionID, options, signal);
+export const deleteSession = (directory, sessionID, signal) =>
+  opencodeApi.deleteSession(directory, sessionID, signal);
 
-export const sendCommand = (sessionID, options, signal) =>
-  opencodeApi.sendCommand(sessionID, options, signal);
+export const listPermissions = (directory, signal) =>
+  opencodeApi.listPermissions(directory, signal);
 
-export const abortSession = (sessionID, signal) =>
-  opencodeApi.abortSession(sessionID, signal);
+export const replyPermission = (directory, requestID, options, signal) =>
+  opencodeApi.replyPermission(directory, requestID, options, signal);
 
-export const listProviders = (signal) =>
-  opencodeApi.listProviders(signal);
+export const listSessionMessages = (directory, sessionID, signal) =>
+  opencodeApi.listSessionMessages(directory, sessionID, signal);
 
-export const listCommands = (signal) =>
-  opencodeApi.listCommands(signal);
+export const getSessionStatuses = (directory, signal) =>
+  opencodeApi.getSessionStatuses(directory, signal);
 
-export const getVcsStatus = (signal) =>
-  opencodeApi.getVcsStatus(signal);
+export const sendPromptAsync = (directory, sessionID, options, signal) =>
+  opencodeApi.sendPromptAsync(directory, sessionID, options, signal);
 
-export const getVcsDiff = (options, signal) =>
-  opencodeApi.getVcsDiff(options, signal);
+export const sendCommand = (directory, sessionID, options, signal) =>
+  opencodeApi.sendCommand(directory, sessionID, options, signal);
+
+export const abortSession = (directory, sessionID, signal) =>
+  opencodeApi.abortSession(directory, sessionID, signal);
+
+export const listProviders = (directory, signal) =>
+  opencodeApi.listProviders(directory, signal);
+
+export const listCommands = (directory, signal) =>
+  opencodeApi.listCommands(directory, signal);
+
+export const getVcsStatus = (directory, signal) =>
+  opencodeApi.getVcsStatus(directory, signal);
+
+export const getVcsDiff = (directory, options, signal) =>
+  opencodeApi.getVcsDiff(directory, options, signal);

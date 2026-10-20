@@ -1,4 +1,7 @@
-import { formatSessionTime } from "../lib/workspace";
+import {
+  formatSessionTime,
+  isSessionArchived,
+} from "../lib/workspace";
 
 export function SessionList({
   sessions,
@@ -6,6 +9,7 @@ export function SessionList({
   onRetry,
   selectedSessionId,
   onSelectSession,
+  onManageSession,
   disabled = false,
   large = false,
 }) {
@@ -43,42 +47,61 @@ export function SessionList({
         <ul className="session-list" aria-label="Sessions in this project">
           {data.map((session) => {
             const selected = selectedSessionId === session.id;
+            const archived = isSessionArchived(session);
 
             return (
               <li
                 className={`session-item${selected ? " selected" : ""}`}
                 key={session.id}
               >
-                <button
-                  type="button"
-                  className="session-select"
-                  aria-pressed={selected}
-                  aria-label={`Open session: ${session.title || "Untitled session"}`}
-                  onClick={() => onSelectSession(session.id)}
-                  disabled={disabled}
-                  title={
-                    disabled
-                      ? "Wait for the current response to finish"
-                      : undefined
-                  }
-                >
-                  <span className="session-title">
-                    {session.title || "Untitled session"}
-                  </span>
-                  <span className="session-meta">
-                    <span>{formatSessionTime(session.time?.updated)}</span>
-                    <span>{session.agent || "agent"}</span>
-                    <span
-                      title={
-                        session.model
-                          ? `${session.model.providerID}/${session.model.id}`
-                          : undefined
-                      }
-                    >
-                      {session.model?.id || "default model"}
+                <div className="session-row">
+                  <button
+                    type="button"
+                    className="session-select"
+                    aria-pressed={selected}
+                    aria-label={`Open session: ${session.title || "Untitled session"}`}
+                    onClick={() => onSelectSession(session.id)}
+                    disabled={disabled}
+                    title={
+                      disabled
+                        ? "Wait for the current response to finish"
+                        : undefined
+                    }
+                  >
+                    <span className="session-title">
+                      {session.title || "Untitled session"}
+                      {archived ? (
+                        <span className="session-archived">ARCHIVED</span>
+                      ) : null}
                     </span>
-                  </span>
-                </button>
+                    <span className="session-meta">
+                      <span>{formatSessionTime(session.time?.updated)}</span>
+                      <span>{session.agent || "agent"}</span>
+                      <span
+                        title={
+                          session.model
+                            ? `${session.model.providerID}/${session.model.id}`
+                            : undefined
+                        }
+                      >
+                        {session.model?.id || "default model"}
+                      </span>
+                    </span>
+                  </button>
+
+                  {onManageSession ? (
+                    <button
+                      type="button"
+                      className="session-manage"
+                      onClick={() => onManageSession(session)}
+                      disabled={disabled}
+                      aria-label={`Manage session: ${session.title || "Untitled session"}`}
+                      title="Rename, archive, or delete this session"
+                    >
+                      ⋯
+                    </button>
+                  ) : null}
+                </div>
               </li>
             );
           })}

@@ -7,6 +7,7 @@ import { SessionsView } from "./components/SessionsView";
 import { SettingsView } from "./components/SettingsView";
 import { SidebarContent } from "./components/Sidebar";
 import { useOpenCodeOverview } from "./hooks/useOpenCodeOverview";
+import { useOpenCodeProjects } from "./hooks/useOpenCodeProjects";
 import { useSessionConversation } from "./hooks/useSessionConversation";
 import {
   useModelsAndCommands,
@@ -14,10 +15,16 @@ import {
 } from "./hooks/useWorkspaceResources";
 import { OPENCODE_BASE_URL } from "./lib/opencode";
 import {
+  FALLBACK_PROJECT,
+  PROJECT_DIRECTORY,
+  PROJECT_STORAGE_KEY,
+} from "./lib/project";
+import {
   buildSessionTitle,
   describeServer,
   findModel,
   formatModelLabel,
+  isSessionArchived,
   offlineLabel,
   resolveEffectiveModel,
 } from "./lib/workspace";
@@ -60,33 +67,114 @@ function storeModel(model) {
   }
 }
 
+function readStoredProjectId() {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const value = window.localStorage.getItem(PROJECT_STORAGE_KEY);
+    return typeof value === "string" && value.length <= 200
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeProjectId(projectId) {
+  if (typeof window === "undefined" || !projectId) return;
+
+  try {
+    window.localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
+  } catch {
+    return;
+  }
+}
+
 export default function App() {
-  const overview = useOpenCodeOverview();
   const {
     health,
-    sessions,
-    refresh,
-    createSession,
-    creatingSession,
-    createError,
-  } = overview;
+    projects,
+    refresh: refreshProjects,
+  } = useOpenCodeProjects();
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState("chat");
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const [preferredModel, setPreferredModel] = useState(readStoredModel);
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    readStoredProjectId,
+  );
+  const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
   const menuButtonRef = useRef(null);
   const drawerRef = useRef(null);
   const wasMenuOpen = useRef(false);
 
   const connected = Boolean(health.data?.healthy);
+  const activeProject = useMemo(() => {
+    const available = projects.data;
+    return (
+      available.find((project) => project.id === selectedProjectId) ??
+      available.find((project) => project.worktree === PROJECT_DIRECTORY) ??
+      available[0] ??
+      FALLBACK_PROJECT
+    );
+  }, [projects.data, selectedProjectId]);
+  const activeDirectory = activeProject.worktree;
+
+  const overview = useOpenCodeOverview({
+    directory: activeDirectory,
+    enabled: connected,
+  });
+  const {
+    sessions,
+    createSession,
+    creatingSession,
+    createError,
+    renameSession,
+    setSessionArchived,
+    deleteSession,
+  } = overview;
+
+  const resources = useModelsAndCommands(activeDirectory, connected);
+  const { changes, refresh: refreshChanges } = useProjectChanges({
+    directory: activeDirectory,
+    connected,
+    active: activeView === "changes",
+  });
+  const conversation = useSessionConversation({
+    directory: activeDirectory,
+    sessionId: selectedSessionId,
+    enabled: connected,
+    onRefreshSessions: overview.refresh,
+  });
+
+  const refresh = useCallback(() => {
+    refreshProjects();
+    overview.refresh();
+    resources.refresh();
+
+    if (activeView === "changes") {
+      refreshChanges();
+    }
+  }, [
+    activeView,
+    overview,
+    refreshChanges,
+    refreshProjects,
+    resources,
+  ]);
+
   const refreshBusy =
     health.status === "loading" ||
     health.status === "refreshing" ||
+    projects.status === "loading" ||
+    projects.status === "refreshing" ||
     sessions.status === "loading" ||
     sessions.status === "refreshing";
   const refreshing =
-    health.status === "refreshing" || sessions.status === "refreshing";
+    health.status === "refreshing" ||
+    projects.status === "refreshing" ||
+    sessions.status === "refreshing";
   const connection = connected
     ? { tone: "online", label: refreshing ? "Refreshing" : "Connected" }
     : health.status === "offline"
@@ -94,28 +182,33 @@ export default function App() {
       : { tone: "loading", label: "Connecting" };
   const canRefresh = !refreshBusy;
   const busyLabel = refreshing
-    ? "Refreshing connection and sessions"
-    : "Loading connection and sessions";
+    ? "Refreshing connection, projects, and sessions"
+    : "Loading connection, projects, and sessions";
 
+  const archivedCount = useMemo(
+    () => sessions.data.filter(isSessionArchived).length,
+    [sessions.data],
+  );
+  const visibleSessionData = useMemo(
+    () =>
+      showArchived
+        ? sessions.data
+        : sessions.data.filter((session) => !isSessionArchived(session)),
+    [sessions.data, showArchived],
+  );
+  const displayedSessions = useMemo(
+    () => ({ ...sessions, data: visibleSessionData }),
+    [sessions, visibleSessionData],
+  );
   const selectedSession = useMemo(
     () =>
       sessions.data.find((session) => session.id === selectedSessionId) ??
+      visibleSessionData[0] ??
       sessions.data[0] ??
       null,
-    [selectedSessionId, sessions.data],
+    [selectedSessionId, sessions.data, visibleSessionData],
   );
   const activeSessionId = selectedSession?.id ?? null;
-
-  const resources = useModelsAndCommands(connected);
-  const { changes, refresh: refreshChanges } = useProjectChanges({
-    connected,
-    active: activeView === "changes",
-  });
-  const conversation = useSessionConversation({
-    sessionId: activeSessionId,
-    enabled: connected,
-    onRefreshSessions: refresh,
-  });
 
   const validPreferredModel = useMemo(() => {
     if (!preferredModel) return null;
@@ -249,6 +342,53 @@ export default function App() {
     [sessionActionsDisabled],
   );
 
+  const handleSelectProject = useCallback(
+    (projectId) => {
+      if (
+        projectId === activeProject.id ||
+        sessionActionsDisabled ||
+        creatingSession
+      ) {
+        return;
+      }
+
+      if (!projects.data.some((project) => project.id === projectId)) {
+        return;
+      }
+
+      setSelectedProjectId(projectId);
+      storeProjectId(projectId);
+      setSelectedSessionId(null);
+      setDraft("");
+      setActiveView("chat");
+      setMenuOpen(false);
+    },
+    [
+      activeProject.id,
+      creatingSession,
+      projects.data,
+      sessionActionsDisabled,
+    ],
+  );
+
+  const handleArchiveSession = useCallback(
+    async (sessionID, archived) => {
+      const result = await setSessionArchived(sessionID, archived);
+
+      if (
+        result.ok &&
+        archived &&
+        !showArchived &&
+        selectedSessionId === sessionID
+      ) {
+        setSelectedSessionId(null);
+      }
+
+      return result;
+    },
+    [selectedSessionId, setSessionArchived, showArchived],
+  );
+
   const handleNavigate = useCallback((view) => {
     setActiveView(view);
     setMenuOpen(false);
@@ -262,7 +402,7 @@ export default function App() {
 
   const sharedSidebarProps = {
     health,
-    sessions,
+    sessions: displayedSessions,
     canRefresh,
     connection,
     onRefresh: refresh,
@@ -275,6 +415,9 @@ export default function App() {
     createError,
     connected,
     sessionActionsDisabled,
+    projects,
+    activeProject,
+    onSelectProject: handleSelectProject,
   };
 
   return (
@@ -344,10 +487,15 @@ export default function App() {
               canRefresh={canRefresh}
               onRefresh={refresh}
               session={selectedSession}
+              project={activeProject}
               messages={conversation.messages}
               phase={conversation.phase}
               actionError={conversation.actionError}
               lastSubmission={conversation.lastSubmission}
+              permissions={conversation.permissions}
+              permissionError={conversation.permissionError}
+              replyingPermissionId={conversation.replyingPermissionId}
+              onPermissionReply={conversation.respondToPermission}
               onSend={conversation.submit}
               onRetrySend={conversation.retryLast}
               onStop={conversation.stop}
@@ -365,7 +513,8 @@ export default function App() {
 
           {activeView === "sessions" ? (
             <SessionsView
-              sessions={sessions}
+              sessions={displayedSessions}
+              project={activeProject}
               selectedSessionId={activeSessionId}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
@@ -374,6 +523,12 @@ export default function App() {
               onRetry={refresh}
               connected={connected}
               sessionActionsDisabled={sessionActionsDisabled}
+              showArchived={showArchived}
+              archivedCount={archivedCount}
+              onToggleArchived={() => setShowArchived((value) => !value)}
+              onRenameSession={renameSession}
+              onArchiveSession={handleArchiveSession}
+              onDeleteSession={deleteSession}
             />
           ) : null}
 
@@ -385,6 +540,7 @@ export default function App() {
               onSelectModel={handleSelectModel}
               onRefresh={resources.refresh}
               connected={connected}
+              project={activeProject}
             />
           ) : null}
 
@@ -393,6 +549,7 @@ export default function App() {
               changes={changes}
               onRefresh={refreshChanges}
               connected={connected}
+              project={activeProject}
             />
           ) : null}
 
@@ -403,6 +560,8 @@ export default function App() {
               connected={connected}
               onRefresh={refresh}
               canRefresh={canRefresh}
+              project={activeProject}
+              projects={projects}
             />
           ) : null}
         </main>

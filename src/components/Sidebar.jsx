@@ -1,8 +1,13 @@
-import { OPENCODE_BASE_URL, PROJECT_DIRECTORY } from "../lib/opencode";
+import { OPENCODE_BASE_URL } from "../lib/opencode";
+import {
+  projectLabel,
+  projectPathLabel,
+} from "../lib/project";
 import {
   describeServer,
   offlineLabel,
 } from "../lib/workspace";
+import { ProjectPicker } from "./ProjectPicker";
 import { SessionList } from "./SessionList";
 
 const NAVIGATION = [
@@ -29,6 +34,9 @@ export function SidebarContent({
   createError,
   connected,
   sessionActionsDisabled,
+  projects,
+  activeProject,
+  onSelectProject,
 }) {
   const sessionCount = sessions.data.length;
 
@@ -48,6 +56,15 @@ export function SidebarContent({
           </button>
         </div>
       ) : null}
+
+      <ProjectPicker
+        projects={projects}
+        activeProject={activeProject}
+        onChange={onSelectProject}
+        disabled={
+          !connected || sessionActionsDisabled || creatingSession
+        }
+      />
 
       <button
         className="new-chat"
@@ -122,8 +139,13 @@ export function SidebarContent({
           </span>
         </div>
         <small>{describeServer(OPENCODE_BASE_URL)}</small>
-        <small className="scope-note" title={PROJECT_DIRECTORY}>
-          This project only
+        <small
+          className="scope-note"
+          title={activeProject ? projectPathLabel(activeProject) : undefined}
+        >
+          {activeProject
+            ? `Scoped to ${projectLabel(activeProject)}`
+            : "Scoped to this project"}
         </small>
       </div>
     </>

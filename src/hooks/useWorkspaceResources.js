@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectionFailure } from "../lib/connection";
 import {
   getVcsDiff,
@@ -8,6 +8,7 @@ import {
 } from "../lib/opencode";
 
 const initialModels = {
+  directory: null,
   status: "idle",
   data: null,
   error: null,
@@ -15,6 +16,7 @@ const initialModels = {
 };
 
 const initialCommands = {
+  directory: null,
   status: "idle",
   data: [],
   error: null,
@@ -22,6 +24,7 @@ const initialCommands = {
 };
 
 const initialChanges = {
+  directory: null,
   status: "idle",
   files: [],
   diffs: [],
@@ -30,37 +33,24 @@ const initialChanges = {
   patchError: null,
 };
 
-export function useModelsAndCommands(connected) {
-  const [models, setModels] = useState(initialModels);
-  const [commands, setCommands] = useState(initialCommands);
+export function useModelsAndCommands(directory, connected) {
+  const [modelState, setModelState] = useState(initialModels);
+  const [commandState, setCommandState] = useState(initialCommands);
   const [refreshToken, setRefreshToken] = useState(0);
   const requestRef = useRef(0);
 
   useEffect(() => {
-    if (!connected) return undefined;
+    if (!directory || !connected) return undefined;
 
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const controller = new AbortController();
 
     async function load() {
-      setModels((previous) => ({
-        status: previous.data ? "refreshing" : "loading",
-        data: previous.data,
-        error: null,
-        errorKind: null,
-      }));
-      setCommands((previous) => ({
-        status: previous.data.length > 0 ? "refreshing" : "loading",
-        data: previous.data,
-        error: null,
-        errorKind: null,
-      }));
-
       const [providersResult, commandsResult] =
         await Promise.allSettled([
-          listProviders(controller.signal),
-          listCommands(controller.signal),
+          listProviders(directory, controller.signal),
+          listCommands(directory, controller.signal),
         ]);
 
       if (
@@ -71,7 +61,8 @@ export function useModelsAndCommands(connected) {
       }
 
       if (providersResult.status === "fulfilled") {
-        setModels({
+        setModelState({
+          directory,
           status: "ready",
           data: providersResult.value,
           error: null,
@@ -82,16 +73,19 @@ export function useModelsAndCommands(connected) {
           providersResult.reason,
           "Models could not be loaded.",
         );
-        setModels((previous) => ({
+        setModelState((previous) => ({
+          directory,
           status: "error",
-          data: previous.data,
+          data:
+            previous.directory === directory ? previous.data : null,
           error: failure.message,
           errorKind: failure.kind,
         }));
       }
 
       if (commandsResult.status === "fulfilled") {
-        setCommands({
+        setCommandState({
+          directory,
           status: "ready",
           data: commandsResult.value,
           error: null,
@@ -102,9 +96,11 @@ export function useModelsAndCommands(connected) {
           commandsResult.reason,
           "Commands could not be loaded.",
         );
-        setCommands((previous) => ({
+        setCommandState((previous) => ({
+          directory,
           status: "error",
-          data: previous.data,
+          data:
+            previous.directory === directory ? previous.data : [],
           error: failure.message,
           errorKind: failure.kind,
         }));
@@ -114,56 +110,87 @@ export function useModelsAndCommands(connected) {
     load();
 
     return () => controller.abort();
-  }, [connected, refreshToken]);
+  }, [connected, directory, refreshToken]);
 
   const refresh = useCallback(() => {
-    if (!connected) return;
+    if (!connected || !directory) return;
+
+    setModelState((previous) => ({
+      directory,
+      status:
+        previous.directory === directory && previous.data
+          ? "refreshing"
+          : "loading",
+      data: previous.directory === directory ? previous.data : null,
+      error: null,
+      errorKind: null,
+    }));
+    setCommandState((previous) => ({
+      directory,
+      status:
+        previous.directory === directory && previous.data.length > 0
+          ? "refreshing"
+          : "loading",
+      data: previous.directory === directory ? previous.data : [],
+      error: null,
+      errorKind: null,
+    }));
     setRefreshToken((value) => value + 1);
-  }, [connected]);
+  }, [connected, directory]);
 
-  const visibleModels =
-    !connected && !models.data
-      ? { ...models, status: "offline" }
-      : models;
-  const visibleCommands =
-    !connected && commands.data.length === 0
-      ? { ...commands, status: "offline" }
-      : commands;
+  const models = useMemo(() => {
+    const scoped =
+      modelState.directory === directory
+        ? modelState
+        : {
+            directory,
+            status: directory && connected ? "loading" : "idle",
+            data: null,
+            error: null,
+            errorKind: null,
+          };
 
-  return {
-    models: visibleModels,
-    commands: visibleCommands,
-    refresh,
-  };
+    return !connected && !scoped.data
+      ? { ...scoped, status: "offline" }
+      : scoped;
+  }, [connected, directory, modelState]);
+
+  const commands = useMemo(() => {
+    const scoped =
+      commandState.directory === directory
+        ? commandState
+        : {
+            directory,
+            status: directory && connected ? "loading" : "idle",
+            data: [],
+            error: null,
+            errorKind: null,
+          };
+
+    return !connected && scoped.data.length === 0
+      ? { ...scoped, status: "offline" }
+      : scoped;
+  }, [commandState, connected, directory]);
+
+  return { models, commands, refresh };
 }
 
-export function useProjectChanges({ connected, active }) {
-  const [changes, setChanges] = useState(initialChanges);
+export function useProjectChanges({ directory, connected, active }) {
+  const [changeState, setChangeState] = useState(initialChanges);
   const [refreshToken, setRefreshToken] = useState(0);
   const requestRef = useRef(0);
 
   useEffect(() => {
-    if (!active) return undefined;
-
-    if (!connected) return undefined;
+    if (!active || !connected || !directory) return undefined;
 
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const controller = new AbortController();
 
     async function load() {
-      setChanges((previous) => ({
-        status: previous.files.length > 0 ? "refreshing" : "loading",
-        files: previous.files,
-        diffs: previous.diffs,
-        error: null,
-        errorKind: null,
-        patchError: null,
-      }));
-
       const [statusResult, diffResult] = await Promise.allSettled([
-        getVcsStatus(controller.signal),
-        getVcsDiff({ mode: "git", context: 3 }, controller.signal),
+        getVcsStatus(directory, controller.signal),
+        getVcsDiff(directory, { mode: "git", context: 3 }, controller.signal),
       ]);
 
       if (
@@ -182,7 +209,8 @@ export function useProjectChanges({ connected, active }) {
               )
             : null;
 
-        setChanges({
+        setChangeState({
+          directory,
           status: "ready",
           files: statusResult.value,
           diffs:
@@ -196,10 +224,13 @@ export function useProjectChanges({ connected, active }) {
           statusResult.reason,
           "Changes could not be loaded.",
         );
-        setChanges((previous) => ({
+        setChangeState((previous) => ({
+          directory,
           status: "error",
-          files: previous.files,
-          diffs: previous.diffs,
+          files:
+            previous.directory === directory ? previous.files : [],
+          diffs:
+            previous.directory === directory ? previous.diffs : [],
           error: failure.message,
           errorKind: failure.kind,
           patchError: null,
@@ -210,17 +241,49 @@ export function useProjectChanges({ connected, active }) {
     load();
 
     return () => controller.abort();
-  }, [active, connected, refreshToken]);
+  }, [active, connected, directory, refreshToken]);
 
   const refresh = useCallback(() => {
-    if (!active || !connected) return;
+    if (!active || !connected || !directory) return;
+
+    setChangeState((previous) => ({
+      directory,
+      status:
+        previous.directory === directory && previous.files.length > 0
+          ? "refreshing"
+          : "loading",
+      files: previous.directory === directory ? previous.files : [],
+      diffs: previous.directory === directory ? previous.diffs : [],
+      error: null,
+      errorKind: null,
+      patchError: null,
+    }));
     setRefreshToken((value) => value + 1);
-  }, [active, connected]);
+  }, [active, connected, directory]);
 
-  const visibleChanges =
-    !connected && changes.files.length === 0
-      ? { ...changes, status: "offline" }
-      : changes;
+  const changes = useMemo(() => {
+    const scoped =
+      changeState.directory === directory
+        ? changeState
+        : {
+            directory,
+            status:
+              active && connected && directory ? "loading" : "idle",
+            files: [],
+            diffs: [],
+            error: null,
+            errorKind: null,
+            patchError: null,
+          };
 
-  return { changes: visibleChanges, refresh };
+    if (active && connected && scoped.status === "idle") {
+      return { ...scoped, status: "loading" };
+    }
+
+    return !connected && scoped.files.length === 0
+      ? { ...scoped, status: "offline" }
+      : scoped;
+  }, [active, changeState, connected, directory]);
+
+  return { changes, refresh };
 }

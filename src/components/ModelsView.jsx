@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { projectLabel } from "../lib/project";
 import {
   formatModelLabel,
   normalizeProviders,
@@ -26,6 +27,7 @@ export function ModelsView({
   onSelectModel,
   onRefresh,
   connected,
+  project,
 }) {
   const normalized = useMemo(
     () => normalizeProviders(models.data),
@@ -40,7 +42,8 @@ export function ModelsView({
           <p className="eyebrow">WORKSPACE</p>
           <h1 id="models-heading">Models</h1>
           <p className="subtitle">
-            Choose the model used for new prompts and sessions.
+            Choose the model used for new prompts and sessions in{" "}
+            {project ? projectLabel(project) : "this project"}.
           </p>
         </div>
         <button

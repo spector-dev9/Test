@@ -1,3 +1,4 @@
+import { projectLabel } from "../lib/project";
 import {
   patchForFile,
   summarizeDiffs,
@@ -7,6 +8,7 @@ export function ChangesView({
   changes,
   onRefresh,
   connected,
+  project,
 }) {
   const summary = summarizeDiffs(changes.files);
 
@@ -17,7 +19,8 @@ export function ChangesView({
           <p className="eyebrow">WORKSPACE</p>
           <h1 id="changes-heading">Changes</h1>
           <p className="subtitle">
-            Uncommitted files reported by OpenCode's VCS integration.
+            Uncommitted files reported by OpenCode's VCS integration for{" "}
+            {project ? projectLabel(project) : "this project"}.
           </p>
         </div>
         <button

@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { MAX_COMPOSER_CHARS } from "../lib/opencode";
+import { projectLabel } from "../lib/project";
 import {
   filterCommands,
   formatSessionTime,
@@ -10,6 +17,7 @@ import {
 } from "../lib/workspace";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { MessageList } from "./MessageList";
+import { PermissionPrompts } from "./PermissionPrompts";
 
 const SUGGESTIONS = [
   "Explain this project and its main entry points.",
@@ -24,10 +32,15 @@ export function ChatView({
   canRefresh,
   onRefresh,
   session,
+  project,
   messages,
   phase,
   actionError,
   lastSubmission,
+  permissions,
+  permissionError,
+  replyingPermissionId,
+  onPermissionReply,
   onSend,
   onRetrySend,
   onStop,
@@ -47,6 +60,7 @@ export function ChatView({
   const stickToBottomRef = useRef(true);
   const submittingRef = useRef(false);
   const previousSessionRef = useRef(session?.id ?? null);
+  const [showLatest, setShowLatest] = useState(false);
 
   const rows = useMemo(
     () => normalizeConversation(messages.data),
@@ -65,15 +79,29 @@ export function ChatView({
     phase === "sending" ||
     phase === "working" ||
     phase === "stopping";
+  const permissionPending = permissions.length > 0;
   const canSubmit =
     connected &&
     Boolean(session) &&
     phase === "idle" &&
+    !permissionPending &&
     draft.trim().length > 0;
   const showEmptyConversation =
     messages.status === "ready" &&
     rows.length === 0 &&
     !busy;
+
+  const scrollToLatest = useCallback((behavior = "auto") => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    stickToBottomRef.current = true;
+    setShowLatest(false);
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior,
+    });
+  }, []);
 
   useEffect(() => {
     const previous = previousSessionRef.current;
@@ -82,7 +110,8 @@ export function ChatView({
     }
     previousSessionRef.current = session?.id ?? null;
     stickToBottomRef.current = true;
-  }, [onDraftChange, session?.id]);
+    requestAnimationFrame(() => scrollToLatest("auto"));
+  }, [onDraftChange, scrollToLatest, session?.id]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -93,8 +122,26 @@ export function ChatView({
 
   useEffect(() => {
     if (!stickToBottomRef.current) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [rows, phase, actionError]);
+    scrollToLatest("auto");
+  }, [rows, phase, actionError, permissionPending, scrollToLatest]);
+
+  useEffect(() => {
+    function handleViewportChange() {
+      if (!stickToBottomRef.current) return;
+      requestAnimationFrame(() => scrollToLatest("auto"));
+    }
+
+    window.visualViewport?.addEventListener("resize", handleViewportChange);
+    window.addEventListener("resize", handleViewportChange);
+
+    return () => {
+      window.visualViewport?.removeEventListener(
+        "resize",
+        handleViewportChange,
+      );
+      window.removeEventListener("resize", handleViewportChange);
+    };
+  }, [scrollToLatest]);
 
   async function submitDraft(event) {
     event?.preventDefault();
@@ -114,7 +161,10 @@ export function ChatView({
               agent: session?.agent || undefined,
             };
       const accepted = await onSend(payload);
-      if (accepted) onDraftChange("");
+      if (accepted) {
+        onDraftChange("");
+        scrollToLatest("smooth");
+      }
     } finally {
       submittingRef.current = false;
     }
@@ -141,7 +191,14 @@ export function ChatView({
     if (!element) return;
     const distance =
       element.scrollHeight - element.scrollTop - element.clientHeight;
-    stickToBottomRef.current = distance < 80;
+    const nearBottom = distance < 80;
+    stickToBottomRef.current = nearBottom;
+    setShowLatest(!nearBottom && rows.length > 0);
+  }
+
+  function handleComposerFocus() {
+    if (!stickToBottomRef.current) return;
+    requestAnimationFrame(() => scrollToLatest("smooth"));
   }
 
   const heading = session
@@ -239,7 +296,9 @@ export function ChatView({
                     : "Checking server"}
               </span>
               <span className="fact">⌁ {modelLabel}</span>
-              <span className="fact">This project only</span>
+              <span className="fact">
+                ◫ {project ? projectLabel(project) : "This project"}
+              </span>
             </div>
           </section>
         ) : (
@@ -298,6 +357,23 @@ export function ChatView({
       </div>
 
       <div className="composer-shell">
+        {showLatest ? (
+          <button
+            type="button"
+            className="jump-latest"
+            onClick={() => scrollToLatest("smooth")}
+          >
+            ↓ Latest
+          </button>
+        ) : null}
+
+        <PermissionPrompts
+          permissions={permissions}
+          onReply={onPermissionReply}
+          busyId={replyingPermissionId}
+          error={permissionError}
+        />
+
         {actionError ? (
           <div className="action-error" role="alert">
             <span>{actionError.message}</span>
@@ -353,13 +429,16 @@ export function ChatView({
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={handleComposerFocus}
             rows={1}
             maxLength={MAX_COMPOSER_CHARS}
-            disabled={!connected || !session}
+            disabled={!connected || !session || permissionPending}
             placeholder={
               connected
                 ? session
-                  ? "Ask OpenCode to inspect, explain, or change this project…"
+                  ? permissionPending
+                    ? "Respond to the permission request above"
+                    : "Ask OpenCode to inspect, explain, or change this project…"
                   : "Create a session to start"
                 : "Reconnect to the local OpenCode server"
             }
@@ -372,15 +451,17 @@ export function ChatView({
                 ? "Server offline · reconnect to send"
                 : !session
                   ? "Create a session to start"
-                  : phase === "sending"
-                    ? "Sending prompt…"
-                    : phase === "working"
-                      ? "Agent working · you can stop it"
-                      : phase === "stopping"
-                        ? "Stopping the agent…"
-                        : draft.length > MAX_COMPOSER_CHARS - 2000
-                          ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
-                          : "Ctrl/⌘ + Enter to send · type / for commands"}
+                  : permissionPending
+                    ? "Permission required · review the prompt above"
+                    : phase === "sending"
+                      ? "Sending prompt…"
+                      : phase === "working"
+                        ? "Agent working · you can stop it"
+                        : phase === "stopping"
+                          ? "Stopping the agent…"
+                          : draft.length > MAX_COMPOSER_CHARS - 2000
+                            ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
+                            : "Ctrl/⌘ + Enter to send · type / for commands"}
             </span>
             <div className="composer-actions">
               {phase === "working" ? (

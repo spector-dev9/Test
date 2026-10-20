@@ -8,6 +8,10 @@ import {
   MAX_RESPONSE_BYTES,
 } from "./nativeFetch.js";
 import { PROJECT_DIRECTORY } from "./project.js";
+import {
+  registerProjectDirectories,
+  resetProjectDirectoryScope,
+} from "./projectScope.js";
 
 const HEALTH_URL = "http://127.0.0.1:4096/global/health";
 
@@ -112,7 +116,7 @@ test("accepts the real SDK health and session request shapes", async () => {
 });
 
 test("rejects unsupported methods before contacting Capacitor", async () => {
-  for (const method of ["PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
+  for (const method of ["PUT", "OPTIONS", "HEAD"]) {
     const http = createHttp();
     const nativeFetch = createNativeFetch(http);
 
@@ -304,12 +308,30 @@ function sessionItemUrl(
   return url.href;
 }
 
-function jsonRequest(body) {
+function jsonRequest(body, method = "POST") {
   return {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   };
+}
+
+function sessionResourceUrl(sessionID = "ses_test123") {
+  const url = new URL(
+    `/session/${sessionID}`,
+    "http://127.0.0.1:4096",
+  );
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+  return url.href;
+}
+
+function permissionReplyUrl(requestID = "perm_1") {
+  const url = new URL(
+    `/permission/${requestID}/reply`,
+    "http://127.0.0.1:4096",
+  );
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+  return url.href;
 }
 
 test("allows validated session create, prompt, command, and abort writes", async () => {
@@ -374,8 +396,133 @@ test("allows validated session create, prompt, command, and abort writes", async
   assert.equal(abortHttp.calls[0].data, undefined);
 });
 
+test("allows project discovery without a project query", async () => {
+  const http = createHttp({
+    status: 200,
+    data: [{ id: "global", worktree: PROJECT_DIRECTORY }],
+    headers: {},
+  });
+  const response = await createNativeFetch(http)(
+    "http://127.0.0.1:4096/project",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(http.calls.length, 1);
+  assert.equal(http.calls[0].method, "GET");
+
+  const rejectedHttp = createHttp();
+  await assert.rejects(
+    createNativeFetch(rejectedHttp)(
+      `http://127.0.0.1:4096/project?directory=${encodeURIComponent(PROJECT_DIRECTORY)}`,
+    ),
+    /project query/,
+  );
+  assert.equal(rejectedHttp.calls.length, 0);
+});
+
+test("allows a project directory only after discovery registers it", async (t) => {
+  t.after(resetProjectDirectoryScope);
+
+  const directory = "/tmp/discovered-project";
+  const url = new URL("/session", "http://127.0.0.1:4096");
+  url.searchParams.set("directory", directory);
+
+  const unknownHttp = createHttp();
+  await assert.rejects(
+    createNativeFetch(unknownHttp)(url.href),
+    /known project directory/,
+  );
+  assert.equal(unknownHttp.calls.length, 0);
+
+  registerProjectDirectories([directory]);
+  const knownHttp = createHttp({ status: 200, data: "[]", headers: {} });
+  await createNativeFetch(knownHttp)(url.href);
+  assert.equal(knownHttp.calls.length, 1);
+});
+
+test("allows scoped session updates, deletes, and permission replies", async () => {
+  const updateHttp = createHttp({
+    status: 200,
+    data: { id: "ses_test123", directory: PROJECT_DIRECTORY },
+    headers: { "content-type": "application/json" },
+  });
+  await createNativeFetch(updateHttp)(
+    sessionResourceUrl(),
+    jsonRequest({ title: "Renamed", time: { archived: 1234 } }, "PATCH"),
+  );
+  assert.equal(updateHttp.calls[0].method, "PATCH");
+  assert.deepEqual(updateHttp.calls[0].data, {
+    title: "Renamed",
+    time: { archived: 1234 },
+  });
+
+  const deleteHttp = createHttp({ status: 200, data: true, headers: {} });
+  await createNativeFetch(deleteHttp)(sessionResourceUrl(), {
+    method: "DELETE",
+  });
+  assert.equal(deleteHttp.calls[0].method, "DELETE");
+
+  const replyHttp = createHttp({ status: 200, data: true, headers: {} });
+  await createNativeFetch(replyHttp)(
+    permissionReplyUrl(),
+    jsonRequest({ reply: "once", message: "approved" }),
+  );
+  assert.deepEqual(replyHttp.calls[0].data, {
+    reply: "once",
+    message: "approved",
+  });
+});
+
+test("rejects invalid session updates and permission replies", async () => {
+  const cases = [
+    {
+      url: sessionResourceUrl(),
+      init: jsonRequest({}, "PATCH"),
+    },
+    {
+      url: sessionResourceUrl(),
+      init: jsonRequest({ time: { archived: -1 } }, "PATCH"),
+    },
+    {
+      url: sessionResourceUrl(),
+      init: jsonRequest({ time: { archived: "now" } }, "PATCH"),
+    },
+    {
+      url: sessionResourceUrl(),
+      init: jsonRequest({ title: "", extra: true }, "PATCH"),
+    },
+    {
+      url: permissionReplyUrl(),
+      init: jsonRequest({ reply: "yes" }),
+    },
+    {
+      url: permissionReplyUrl(),
+      init: jsonRequest({ reply: "once", message: "x".repeat(2001) }),
+    },
+    {
+      url: permissionReplyUrl("bad id"),
+      init: jsonRequest({ reply: "once" }),
+    },
+    {
+      url: `${sessionResourceUrl()}?extra=1`,
+      init: jsonRequest({ time: { archived: 1 } }, "PATCH"),
+    },
+  ];
+
+  for (const item of cases) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(item.url, item.init),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
+  }
+});
+
 test("allows the phase 2 read endpoints", async () => {
   const urls = [
+    "http://127.0.0.1:4096/permission?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
     sessionItemUrl("message", { query: { limit: 200 } }),
     "http://127.0.0.1:4096/session/status?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
@@ -522,6 +669,14 @@ test("accepts the real SDK phase 2 request shapes", async () => {
         data = { providers: [], default: {} };
       } else if (path === "/session/status") {
         data = {};
+      } else if (path === "/project") {
+        data = [{ id: "mobile", worktree: PROJECT_DIRECTORY }];
+      } else if (path.startsWith("/session/") && options.method === "PATCH") {
+        data = { id: sessionID, directory: PROJECT_DIRECTORY };
+      } else if (path.startsWith("/session/") && options.method === "DELETE") {
+        data = true;
+      } else if (path.startsWith("/permission/")) {
+        data = true;
       }
 
       return {
@@ -570,6 +725,20 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     mode: "git",
     context: 3,
   });
+  await client.project.list({});
+  await client.session.update({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+    title: "Renamed",
+    time: { archived: 1234 },
+  });
+  await client.permission.list({ directory: PROJECT_DIRECTORY });
+  await client.permission.reply({
+    requestID: "perm_1",
+    directory: PROJECT_DIRECTORY,
+    reply: "once",
+  });
+  await client.session.delete({ sessionID, directory: PROJECT_DIRECTORY });
 
   assert.deepEqual(
     calls.map((call) => `${call.method} ${new URL(call.url).pathname}`),
@@ -583,13 +752,21 @@ test("accepts the real SDK phase 2 request shapes", async () => {
       "GET /command",
       "GET /vcs/status",
       "GET /vcs/diff",
+      "GET /project",
+      `PATCH /session/${sessionID}`,
+      "GET /permission",
+      "POST /permission/perm_1/reply",
+      `DELETE /session/${sessionID}`,
     ],
   );
 
   for (const call of calls) {
-    assert.equal(
-      new URL(call.url).searchParams.get("directory"),
-      PROJECT_DIRECTORY,
-    );
+    const url = new URL(call.url);
+    if (url.pathname === "/project") {
+      assert.equal(url.search, "");
+      continue;
+    }
+
+    assert.equal(url.searchParams.get("directory"), PROJECT_DIRECTORY);
   }
 });

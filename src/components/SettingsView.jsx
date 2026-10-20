@@ -4,8 +4,11 @@ import { MAX_RESPONSE_BYTES } from "../lib/nativeFetch";
 import {
   MAX_COMPOSER_CHARS,
   OPENCODE_BASE_URL,
-  PROJECT_DIRECTORY,
 } from "../lib/opencode";
+import {
+  projectLabel,
+  projectPathLabel,
+} from "../lib/project";
 import {
   describeServer,
   offlineLabel,
@@ -26,6 +29,8 @@ export function SettingsView({
   connected,
   onRefresh,
   canRefresh,
+  project,
+  projects,
 }) {
   const native = Capacitor.isNativePlatform();
   const statusLabel = connected
@@ -75,8 +80,20 @@ export function SettingsView({
             <DetailRow label="Server version">
               {connected ? `v${health.data.version}` : "Unavailable"}
             </DetailRow>
+            <DetailRow label="Active project">
+              {project ? projectLabel(project) : "Unavailable"}
+            </DetailRow>
             <DetailRow label="Project directory">
-              <code>{PROJECT_DIRECTORY}</code>
+              <code>
+                {project
+                  ? projectPathLabel(project)
+                  : "No project selected"}
+              </code>
+            </DetailRow>
+            <DetailRow label="Discovered projects">
+              {projects?.status === "ready"
+                ? projects.data.length
+                : "Unavailable"}
             </DetailRow>
             <DetailRow label="Transport">
               {native ? "Native Capacitor HTTP" : "Browser fetch"}
@@ -120,14 +137,17 @@ export function SettingsView({
         <span className="panel-kicker">DIAGNOSTICS</span>
         <h2>What this app can access</h2>
         <ul className="settings-list">
-          <li>Health and project sessions</li>
+          <li>Health, project discovery, and scoped session lists</li>
           <li>Session messages, prompts, commands, and abort requests</li>
-          <li>Configured models and project commands</li>
-          <li>VCS status and patches for this project only</li>
+          <li>Rename, archive, restore, and permanent session deletion</li>
+          <li>Pending permission requests and explicit replies</li>
+          <li>Configured models, project commands, and VCS data</li>
         </ul>
         <p className="panel-note">
           The app does not read your OpenCode credentials, bypass provider
-          policy, or automatically approve agent actions.
+          policy, or automatically approve agent actions. Permission prompts
+          require an explicit response. Conversations refresh by polling
+          because the native HTTP bridge does not expose server-sent events.
         </p>
       </div>
     </section>

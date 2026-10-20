@@ -3,7 +3,9 @@ import { connectionFailure } from "../lib/connection";
 import {
   abortSession,
   getSessionStatuses,
+  listPermissions,
   listSessionMessages,
+  replyPermission,
   sendCommand,
   sendPromptAsync,
 } from "../lib/opencode";
@@ -16,7 +18,9 @@ const initialMessages = {
   errorKind: null,
 };
 
-const POLL_INTERVAL_MS = 1400;
+const POLL_INTERVAL_MS = 1200;
+const IDLE_CONFIRMATIONS = 2;
+const SUBMIT_GRACE_MS = 5000;
 const POLL_FAILURE_LIMIT = 3;
 
 function delay(ms, signal) {
@@ -56,16 +60,23 @@ function actionFailure(error, fallback) {
   return failure;
 }
 
-async function loadSnapshot(sessionID, signal) {
-  const [messages, statuses] = await Promise.allSettled([
-    listSessionMessages(sessionID, signal),
-    getSessionStatuses(signal),
+function permissionsForSession(rows, sessionID) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((request) => request?.sessionID === sessionID);
+}
+
+async function loadSnapshot(directory, sessionID, signal) {
+  const [messages, statuses, permissions] = await Promise.allSettled([
+    listSessionMessages(directory, sessionID, signal),
+    getSessionStatuses(directory, signal),
+    listPermissions(directory, signal),
   ]);
 
-  return { messages, statuses };
+  return { messages, statuses, permissions };
 }
 
 export function useSessionConversation({
+  directory,
   sessionId,
   enabled,
   onRefreshSessions,
@@ -74,11 +85,16 @@ export function useSessionConversation({
   const [phase, setPhase] = useState("idle");
   const [actionError, setActionError] = useState(null);
   const [lastSubmission, setLastSubmission] = useState(null);
+  const [permissions, setPermissions] = useState([]);
+  const [permissionError, setPermissionError] = useState(null);
+  const [replyingPermissionId, setReplyingPermissionId] = useState(null);
   const phaseRef = useRef("idle");
   const epochRef = useRef(0);
   const messageRequestRef = useRef(0);
   const mountedRef = useRef(true);
   const sessionIDRef = useRef(null);
+  const directoryRef = useRef(null);
+  const submittedAtRef = useRef(0);
   const refreshSessionsRef = useRef(onRefreshSessions);
 
   useEffect(() => {
@@ -104,26 +120,36 @@ export function useSessionConversation({
     const requestId = messageRequestRef.current;
     const controller = new AbortController();
 
-    const sessionChanged = sessionIDRef.current !== sessionId;
+    const connectionChanged =
+      directoryRef.current !== directory ||
+      sessionIDRef.current !== sessionId;
     sessionIDRef.current = sessionId;
+    directoryRef.current = directory;
 
     async function load() {
       setPhaseSafe("idle");
       setActionError(null);
       setLastSubmission(null);
+      setPermissionError(null);
+      setReplyingPermissionId(null);
+      submittedAtRef.current = 0;
 
-      if (!sessionId) {
+      if (!sessionId || !directory) {
         setMessages(initialMessages);
+        setPermissions([]);
         return;
       }
 
       if (!enabled) {
-        if (sessionChanged) setMessages(initialMessages);
+        if (connectionChanged) {
+          setMessages(initialMessages);
+          setPermissions([]);
+        }
         return;
       }
 
       setMessages((previous) =>
-        !sessionChanged && previous.data.length > 0
+        !connectionChanged && previous.data.length > 0
           ? {
               status: "refreshing",
               data: previous.data,
@@ -133,7 +159,11 @@ export function useSessionConversation({
           : { status: "loading", data: [], error: null, errorKind: null },
       );
 
-      const result = await loadSnapshot(sessionId, controller.signal);
+      const result = await loadSnapshot(
+        directory,
+        sessionId,
+        controller.signal,
+      );
 
       if (
         controller.signal.aborted ||
@@ -167,15 +197,21 @@ export function useSessionConversation({
         const status = result.statuses.value[sessionId];
         if (statusIsBusy(status)) setPhaseSafe("working");
       }
+
+      if (result.permissions.status === "fulfilled") {
+        setPermissions(
+          permissionsForSession(result.permissions.value, sessionId),
+        );
+      }
     }
 
     load();
 
     return () => controller.abort();
-  }, [enabled, sessionId, setPhaseSafe]);
+  }, [directory, enabled, sessionId, setPhaseSafe]);
 
   useEffect(() => {
-    if (phase !== "working" || !sessionId || !enabled) {
+    if (phase !== "working" || !sessionId || !directory || !enabled) {
       return undefined;
     }
 
@@ -198,7 +234,11 @@ export function useSessionConversation({
 
         const requestId = messageRequestRef.current + 1;
         messageRequestRef.current = requestId;
-        const result = await loadSnapshot(sessionId, controller.signal);
+        const result = await loadSnapshot(
+          directory,
+          sessionId,
+          controller.signal,
+        );
 
         if (
           stopped ||
@@ -218,6 +258,12 @@ export function useSessionConversation({
           });
         }
 
+        if (result.permissions.status === "fulfilled") {
+          setPermissions(
+            permissionsForSession(result.permissions.value, sessionId),
+          );
+        }
+
         if (result.statuses.status === "fulfilled") {
           failures = 0;
           const status = result.statuses.value[sessionId];
@@ -231,15 +277,19 @@ export function useSessionConversation({
           const settled =
             result.messages.status === "fulfilled" &&
             isConversationSettled(result.messages.value);
+          const submitAge = Date.now() - submittedAtRef.current;
+          const trustedIdle =
+            sawBusy || submitAge >= SUBMIT_GRACE_MS || settled;
 
-          if (sawBusy || settled) {
+          if (trustedIdle) {
             idleHits += 1;
           } else {
             idleHits = 0;
           }
 
-          if (idleHits >= 2) {
+          if (idleHits >= IDLE_CONFIRMATIONS) {
             setPhaseSafe("idle");
+            submittedAtRef.current = 0;
             refreshSessionsRef.current?.();
             return;
           }
@@ -254,6 +304,7 @@ export function useSessionConversation({
           );
           setActionError({ ...failure, retryable: false });
           setPhaseSafe("idle");
+          submittedAtRef.current = 0;
           refreshSessionsRef.current?.();
           return;
         }
@@ -266,10 +317,10 @@ export function useSessionConversation({
       stopped = true;
       controller.abort();
     };
-  }, [enabled, phase, sessionId, setPhaseSafe]);
+  }, [directory, enabled, phase, sessionId, setPhaseSafe]);
 
   const refresh = useCallback(async () => {
-    if (!sessionId || !enabled) return false;
+    if (!directory || !sessionId || !enabled) return false;
     if (phaseRef.current === "sending" || phaseRef.current === "stopping") {
       return false;
     }
@@ -285,7 +336,7 @@ export function useSessionConversation({
       errorKind: null,
     }));
 
-    const result = await loadSnapshot(sessionId);
+    const result = await loadSnapshot(directory, sessionId);
 
     if (
       epoch !== epochRef.current ||
@@ -315,6 +366,12 @@ export function useSessionConversation({
       return false;
     }
 
+    if (result.permissions.status === "fulfilled") {
+      setPermissions(
+        permissionsForSession(result.permissions.value, sessionId),
+      );
+    }
+
     if (result.statuses.status === "fulfilled") {
       if (statusIsBusy(result.statuses.value[sessionId])) {
         setPhaseSafe("working");
@@ -324,11 +381,12 @@ export function useSessionConversation({
     }
 
     return true;
-  }, [enabled, sessionId, setPhaseSafe]);
+  }, [directory, enabled, sessionId, setPhaseSafe]);
 
   const submit = useCallback(
     async (request) => {
       if (
+        !directory ||
         !sessionId ||
         !enabled ||
         phaseRef.current !== "idle" ||
@@ -340,18 +398,19 @@ export function useSessionConversation({
       const stored = { request };
       setLastSubmission(stored);
       setActionError(null);
+      submittedAtRef.current = Date.now();
       setPhaseSafe("sending");
 
       try {
         if (request.kind === "command") {
-          await sendCommand(sessionId, {
+          await sendCommand(directory, sessionId, {
             command: request.command,
             arguments: request.arguments,
             model: request.model,
             agent: request.agent,
           });
         } else {
-          await sendPromptAsync(sessionId, {
+          await sendPromptAsync(directory, sessionId, {
             text: request.text,
             model: request.model,
             agent: request.agent,
@@ -368,12 +427,13 @@ export function useSessionConversation({
             ? "The command could not be sent."
             : "The prompt could not be sent.",
         );
+        submittedAtRef.current = 0;
         setActionError({ ...failure, retryable: true });
         setPhaseSafe("idle");
         return false;
       }
     },
-    [enabled, sessionId, setPhaseSafe],
+    [directory, enabled, sessionId, setPhaseSafe],
   );
 
   const retryLast = useCallback(() => {
@@ -382,7 +442,12 @@ export function useSessionConversation({
   }, [lastSubmission, submit]);
 
   const stop = useCallback(async () => {
-    if (!sessionId || !enabled || phaseRef.current !== "working") {
+    if (
+      !directory ||
+      !sessionId ||
+      !enabled ||
+      phaseRef.current !== "working"
+    ) {
       return false;
     }
 
@@ -390,11 +455,11 @@ export function useSessionConversation({
     setPhaseSafe("stopping");
 
     try {
-      await abortSession(sessionId);
+      await abortSession(directory, sessionId);
       const requestId = messageRequestRef.current + 1;
       messageRequestRef.current = requestId;
       const epoch = epochRef.current;
-      const result = await loadSnapshot(sessionId);
+      const result = await loadSnapshot(directory, sessionId);
 
       if (
         epoch !== epochRef.current ||
@@ -412,6 +477,12 @@ export function useSessionConversation({
         });
       }
 
+      if (result.permissions.status === "fulfilled") {
+        setPermissions(
+          permissionsForSession(result.permissions.value, sessionId),
+        );
+      }
+
       if (
         result.statuses.status === "fulfilled" &&
         statusIsBusy(result.statuses.value[sessionId])
@@ -419,6 +490,7 @@ export function useSessionConversation({
         setPhaseSafe("working");
       } else {
         setPhaseSafe("idle");
+        submittedAtRef.current = 0;
       }
 
       refreshSessionsRef.current?.();
@@ -431,7 +503,60 @@ export function useSessionConversation({
       setPhaseSafe("working");
       return false;
     }
-  }, [enabled, sessionId, setPhaseSafe]);
+  }, [directory, enabled, sessionId, setPhaseSafe]);
+
+  const respondToPermission = useCallback(
+    async (requestID, reply, message) => {
+      if (!directory || !sessionId || !enabled) return false;
+
+      setPermissionError(null);
+      setReplyingPermissionId(requestID);
+
+      try {
+        await replyPermission(directory, requestID, { reply, message });
+
+        const result = await loadSnapshot(directory, sessionId);
+
+        if (result.messages.status === "fulfilled") {
+          setMessages({
+            status: "ready",
+            data: result.messages.value,
+            error: null,
+            errorKind: null,
+          });
+        }
+
+        if (result.permissions.status === "fulfilled") {
+          setPermissions(
+            permissionsForSession(result.permissions.value, sessionId),
+          );
+        } else {
+          setPermissions((previous) =>
+            previous.filter((request) => request.id !== requestID),
+          );
+        }
+
+        if (result.statuses.status === "fulfilled") {
+          if (statusIsBusy(result.statuses.value[sessionId])) {
+            setPhaseSafe("working");
+          }
+        }
+
+        refreshSessionsRef.current?.();
+        return true;
+      } catch (error) {
+        const failure = connectionFailure(
+          error,
+          "The permission response could not be sent.",
+        );
+        setPermissionError(failure.message);
+        return false;
+      } finally {
+        setReplyingPermissionId(null);
+      }
+    },
+    [directory, enabled, sessionId, setPhaseSafe],
+  );
 
   const clearActionError = useCallback(() => {
     setActionError(null);
@@ -442,10 +567,14 @@ export function useSessionConversation({
     phase,
     actionError,
     lastSubmission,
+    permissions,
+    permissionError,
+    replyingPermissionId,
     refresh,
     submit,
     retryLast,
     stop,
+    respondToPermission,
     clearActionError,
   };
 }

@@ -118,6 +118,35 @@ export function buildSessionTitle(date = new Date()) {
   return `New session · ${sessionTitleDate.format(date)}`.slice(0, 120);
 }
 
+export function isSessionArchived(session) {
+  return Number.isFinite(session?.time?.archived) &&
+    session.time.archived > 0;
+}
+
+export function filterSessions(sessions, query) {
+  if (!Array.isArray(sessions)) return [];
+  const normalized = typeof query === "string"
+    ? query.trim().toLowerCase()
+    : "";
+
+  if (!normalized) return sessions;
+
+  return sessions.filter((session) => {
+    const values = [
+      session?.title,
+      session?.agent,
+      session?.model?.id,
+      session?.model?.providerID,
+    ];
+
+    return values.some(
+      (value) =>
+        typeof value === "string" &&
+        value.toLowerCase().includes(normalized),
+    );
+  });
+}
+
 export function assistantErrorMessage(error) {
   if (!error || typeof error !== "object") return null;
   return (
