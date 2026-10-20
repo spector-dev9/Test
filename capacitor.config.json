@@ -9,8 +9,7 @@
   "plugins": {
     "SystemBars": {
       "style": "DARK",
-      "insetsHandling": "native",
-      "initialViewportFitValueHint": "cover"
+      "insetsHandling": "disable"
     }
   },
   "cordova": {
