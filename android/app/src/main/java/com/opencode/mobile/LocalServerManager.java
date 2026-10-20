@@ -683,7 +683,7 @@ final class LocalServerManager {
         }
     }
 
-    private void verifyRequired(File runtime, JSONObject meta) throws IOException {
+    private void verifyRequired(File runtime, JSONObject meta) throws Exception {
         JSONArray required = meta.getJSONArray("required");
         for (int index = 0; index < required.length(); index++) {
             String name = required.getString(index);
