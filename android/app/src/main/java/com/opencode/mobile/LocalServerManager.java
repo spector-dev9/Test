@@ -373,7 +373,7 @@ final class LocalServerManager {
             done = new ArrayList<>(waiters);
             waiters.clear();
         }
-        emit(snapshot);
+        emit(null);
         callbackOutside(done, snapshot, error);
     }
 
