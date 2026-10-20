@@ -494,3 +494,109 @@ test("loads providers, commands, and VCS data with validated options", async () 
     /diff context is invalid/,
   );
 });
+
+test("loads project files, searches, and applies safe patches", async () => {
+  const calls = [];
+  const patch = [
+    "diff --git a/src/App.jsx b/src/App.jsx",
+    "--- a/src/App.jsx",
+    "+++ b/src/App.jsx",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+  const api = createOpenCodeApi({
+    file: {
+      list: async (parameters) => {
+        calls.push(["list", parameters]);
+        return fulfilled([
+          {
+            name: "src",
+            path: "src/",
+            absolute: `${PROJECT_DIRECTORY}/src`,
+            type: "directory",
+            ignored: false,
+          },
+          {
+            name: "README.md",
+            path: "README.md",
+            absolute: `${PROJECT_DIRECTORY}/README.md`,
+            type: "file",
+            ignored: false,
+          },
+        ]);
+      },
+      read: async (parameters) => {
+        calls.push(["read", parameters]);
+        return fulfilled({
+          type: "text",
+          content: "hello",
+          mimeType: "text/plain",
+        });
+      },
+    },
+    find: {
+      files: async (parameters) => {
+        calls.push(["find", parameters]);
+        return fulfilled(["src/App.jsx", "src/App.jsx", "../secret"]);
+      },
+    },
+    vcs: {
+      apply: async (parameters) => {
+        calls.push(["apply", parameters]);
+        return fulfilled({ applied: true });
+      },
+    },
+  });
+
+  assert.deepEqual(await api.listProjectFiles(PROJECT_DIRECTORY, "."), [
+    { name: "src", path: "src", type: "directory", ignored: false },
+    { name: "README.md", path: "README.md", type: "file", ignored: false },
+  ]);
+  assert.deepEqual(
+    await api.readProjectFile(PROJECT_DIRECTORY, "README.md"),
+    {
+      type: "text",
+      content: "hello",
+      encoding: null,
+      mimeType: "text/plain",
+    },
+  );
+  assert.deepEqual(
+    await api.searchProjectFiles(PROJECT_DIRECTORY, " App "),
+    ["src/App.jsx"],
+  );
+  assert.deepEqual(
+    await api.applyProjectPatch(PROJECT_DIRECTORY, patch),
+    { applied: true },
+  );
+
+  assert.deepEqual(calls, [
+    ["list", { directory: PROJECT_DIRECTORY, path: "." }],
+    ["read", { directory: PROJECT_DIRECTORY, path: "README.md" }],
+    [
+      "find",
+      {
+        directory: PROJECT_DIRECTORY,
+        query: "App",
+        type: "file",
+        limit: 100,
+      },
+    ],
+    ["apply", { directory: PROJECT_DIRECTORY, patch }],
+  ]);
+
+  await assert.rejects(
+    api.listProjectFiles(PROJECT_DIRECTORY, "../secret"),
+    /file path is invalid/,
+  );
+  await assert.rejects(
+    api.searchProjectFiles(PROJECT_DIRECTORY, " "),
+    /Enter text/,
+  );
+  await assert.rejects(
+    api.applyProjectPatch(PROJECT_DIRECTORY, "not a patch"),
+    /not a safe single-file patch/,
+  );
+});

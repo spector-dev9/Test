@@ -4,6 +4,10 @@ import {
   NATIVE_OPENCODE_ORIGIN,
   OpenCodeConnectionError,
 } from "./connection.js";
+import {
+  normalizeProjectPath,
+  validateFilePatch,
+} from "./files.js";
 import { isAllowedProjectDirectory } from "./projectScope.js";
 
 const HEALTH_PATH = "/global/health";
@@ -18,6 +22,10 @@ const PROVIDERS_PATH = "/config/providers";
 const COMMANDS_PATH = "/command";
 const VCS_STATUS_PATH = "/vcs/status";
 const VCS_DIFF_PATH = "/vcs/diff";
+const VCS_APPLY_PATH = "/vcs/apply";
+const FILE_PATH = "/file";
+const FILE_CONTENT_PATH = "/file/content";
+const FILE_FIND_PATH = "/find/file";
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const MODEL_REF_PATTERN = /^[A-Za-z0-9._:-]+\/[A-Za-z0-9._:-]+$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -25,9 +33,10 @@ const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
 const MAX_SESSION_TITLE_CHARS = 120;
 const MAX_PERMISSION_MESSAGE_CHARS = 2000;
+const MAX_FILE_SEARCH_CHARS = 200;
 const PERMISSION_REPLIES = ["once", "always", "reject"];
 
-export const MAX_REQUEST_BYTES = 256 * 1024;
+export const MAX_REQUEST_BYTES = 3 * 1024 * 1024;
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 const OMITTED_RESPONSE_HEADERS = new Set([
@@ -144,6 +153,19 @@ function requireIntegerQuery(url, key, min, max) {
   }
 
   return value;
+}
+
+function requireStringQuery(url, key, maxLength) {
+  const values = url.searchParams.getAll(key);
+  if (
+    values.length !== 1 ||
+    !values[0] ||
+    values[0].length > maxLength
+  ) {
+    throw invalidRequest(`requires a valid ${key} query.`);
+  }
+
+  return values[0];
 }
 
 function exactKeys(value, allowed) {
@@ -395,6 +417,41 @@ function validateReadRequest(url) {
     return;
   }
 
+  if (url.pathname === FILE_PATH) {
+    requireProjectQuery(url, ["path"]);
+    if (!normalizeProjectPath(requireStringQuery(url, "path", 4096), {
+      allowRoot: true,
+    })) {
+      throw invalidRequest("requires a valid file path.");
+    }
+    return;
+  }
+
+  if (url.pathname === FILE_CONTENT_PATH) {
+    requireProjectQuery(url, ["path"]);
+    if (!normalizeProjectPath(requireStringQuery(url, "path", 4096))) {
+      throw invalidRequest("requires a valid file path.");
+    }
+    return;
+  }
+
+  if (url.pathname === FILE_FIND_PATH) {
+    requireProjectQuery(url, ["query", "type", "limit"]);
+
+    const query = requireStringQuery(url, "query", MAX_FILE_SEARCH_CHARS);
+    if (/[\0\r\n]/.test(query)) {
+      throw invalidRequest("requires a valid file search query.");
+    }
+
+    const types = url.searchParams.getAll("type");
+    if (types.length !== 1 || types[0] !== "file") {
+      throw invalidRequest("requires a file search type.");
+    }
+
+    requireIntegerQuery(url, "limit", 1, 100);
+    return;
+  }
+
   const match = SESSION_ITEM_PATH.exec(url.pathname);
   if (match) {
     if (match[2] !== "message") {
@@ -431,6 +488,16 @@ async function validateMutationRequest(request, url, method) {
 
     const data = await requestBody(request);
     validateSessionUpdateBody(data);
+    return { data };
+  }
+
+  if (url.pathname === VCS_APPLY_PATH) {
+    if (method !== "POST") {
+      throw invalidRequest("rejected the request method.");
+    }
+
+    const data = await requestBody(request);
+    validateFilePatchBody(data);
     return { data };
   }
 
@@ -472,6 +539,17 @@ async function validateMutationRequest(request, url, method) {
   }
 
   throw invalidRequest("rejected the request path.");
+}
+
+function validateFilePatchBody(body) {
+  exactKeys(body, ["patch"]);
+
+  if (
+    typeof body.patch !== "string" ||
+    !validateFilePatch(body.patch)
+  ) {
+    throw invalidRequest("requires a safe single-file patch.");
+  }
 }
 
 async function validateRequest(request) {

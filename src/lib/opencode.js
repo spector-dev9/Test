@@ -1,6 +1,13 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { nativeFetch } from "./nativeFetch.js";
 import {
+  MAX_FILE_SEARCH_RESULTS,
+  normalizeFileContent,
+  normalizeFileNodes,
+  normalizeProjectPath,
+  validateFilePatch,
+} from "./files.js";
+import {
   PROJECT_DIRECTORY,
   normalizeProjectDirectory,
 } from "./project.js";
@@ -127,6 +134,29 @@ function validateProjectDirectory(directory) {
   }
 
   return normalized;
+}
+
+function validateFilePath(path, { allowRoot = false } = {}) {
+  const normalized = normalizeProjectPath(path, { allowRoot });
+
+  if (!normalized) {
+    throw invalidInput("The project file path is invalid.");
+  }
+
+  return normalized;
+}
+
+function validateFileSearch(query) {
+  if (typeof query !== "string" || !query.trim()) {
+    throw invalidInput("Enter text to search for files.");
+  }
+
+  const trimmed = query.trim();
+  if (trimmed.length > 200 || /[\0\r\n]/.test(trimmed)) {
+    throw invalidInput("The file search query is invalid.");
+  }
+
+  return trimmed;
 }
 
 function validateSessionTitle(title) {
@@ -728,6 +758,98 @@ export function createOpenCodeApi(client = opencode) {
       );
     },
 
+    async listProjectFiles(directory, path = ".", signal) {
+      const scope = validateProjectDirectory(directory);
+      const target = validateFilePath(path, { allowRoot: true });
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.file.list(
+            { directory: scope, path: target },
+            { signal: requestSignal },
+          ),
+        "Project files could not be loaded.",
+        signal,
+      );
+
+      return normalizeFileNodes(scope, requireArray(data));
+    },
+
+    async readProjectFile(directory, path, signal) {
+      const scope = validateProjectDirectory(directory);
+      const target = validateFilePath(path);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.file.read(
+            { directory: scope, path: target },
+            { signal: requestSignal },
+          ),
+        "The file could not be opened.",
+        signal,
+      );
+
+      return normalizeFileContent(data);
+    },
+
+    async searchProjectFiles(directory, query, signal) {
+      const scope = validateProjectDirectory(directory);
+      const search = validateFileSearch(query);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.find.files(
+            {
+              directory: scope,
+              query: search,
+              type: "file",
+              limit: MAX_FILE_SEARCH_RESULTS,
+            },
+            { signal: requestSignal },
+          ),
+        "Files could not be searched.",
+        signal,
+      );
+
+      return [
+        ...new Set(
+          requireArray(data).flatMap((value) => {
+            const path = normalizeProjectPath(value);
+            return path ? [path] : [];
+          }),
+        ),
+      ];
+    },
+
+    async applyProjectPatch(directory, patch, signal) {
+      const scope = validateProjectDirectory(directory);
+
+      if (!validateFilePatch(patch)) {
+        throw invalidInput("The file change is not a safe single-file patch.");
+      }
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.vcs.apply(
+            { directory: scope, patch },
+            { signal: requestSignal },
+          ),
+        "The file could not be saved.",
+        signal,
+      );
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.applied !== true
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return data;
+    },
+
     async listProviders(directory, signal) {
       const scope = validateProjectDirectory(directory);
       const data = await runRequest(
@@ -877,3 +999,15 @@ export const getVcsStatus = (directory, signal) =>
 
 export const getVcsDiff = (directory, options, signal) =>
   opencodeApi.getVcsDiff(directory, options, signal);
+
+export const listProjectFiles = (directory, path, signal) =>
+  opencodeApi.listProjectFiles(directory, path, signal);
+
+export const readProjectFile = (directory, path, signal) =>
+  opencodeApi.readProjectFile(directory, path, signal);
+
+export const searchProjectFiles = (directory, query, signal) =>
+  opencodeApi.searchProjectFiles(directory, query, signal);
+
+export const applyProjectPatch = (directory, patch, signal) =>
+  opencodeApi.applyProjectPatch(directory, patch, signal);

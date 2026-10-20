@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { ChangesView } from "./components/ChangesView";
 import { ChatView } from "./components/ChatView";
+import { ContextView } from "./components/ContextView";
+import { FilesView } from "./components/FilesView";
 import { ModelsView } from "./components/ModelsView";
 import { SessionsView } from "./components/SessionsView";
 import { SettingsView } from "./components/SettingsView";
 import { SidebarContent } from "./components/Sidebar";
+import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { useOpenCodeOverview } from "./hooks/useOpenCodeOverview";
 import { useOpenCodeProjects } from "./hooks/useOpenCodeProjects";
 import { useSessionConversation } from "./hooks/useSessionConversation";
@@ -105,6 +108,7 @@ export default function App() {
   );
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
+  const [fileIntent, setFileIntent] = useState(null);
   const menuButtonRef = useRef(null);
   const drawerRef = useRef(null);
   const wasMenuOpen = useRef(false);
@@ -147,6 +151,7 @@ export default function App() {
     enabled: connected,
     onRefreshSessions: overview.refresh,
   });
+  const refreshConversation = conversation.refresh;
 
   const refresh = useCallback(() => {
     refreshProjects();
@@ -390,9 +395,40 @@ export default function App() {
   );
 
   const handleNavigate = useCallback((view) => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     setActiveView(view);
     setMenuOpen(false);
   }, []);
+
+  const handleWorkspaceAction = useCallback(
+    (action) => {
+      if (action === "new-session") {
+        handleNewSession();
+        return;
+      }
+
+      if (action === "new-file" || action === "find-file") {
+        handleNavigate("files");
+        setFileIntent({ kind: action, nonce: Date.now() });
+        return;
+      }
+
+      if (action === "refresh") {
+        handleNavigate(activeView);
+        if (activeView === "files") {
+          setFileIntent({ kind: "refresh", nonce: Date.now() });
+        } else if (activeView === "context" || activeView === "chat") {
+          refreshConversation();
+        } else {
+          refresh();
+        }
+      }
+    },
+    [activeView, handleNavigate, handleNewSession, refresh, refreshConversation],
+  );
 
   const handleSelectModel = useCallback((model) => {
     setPreferredModel(model);
@@ -479,91 +515,130 @@ export default function App() {
         </aside>
 
         <main className="main-area">
-          {activeView === "chat" ? (
-            <ChatView
-              health={health}
-              connected={connected}
-              connection={connection}
-              canRefresh={canRefresh}
-              onRefresh={refresh}
-              session={selectedSession}
-              project={activeProject}
-              messages={conversation.messages}
-              phase={conversation.phase}
-              actionError={conversation.actionError}
-              lastSubmission={conversation.lastSubmission}
-              permissions={conversation.permissions}
-              permissionError={conversation.permissionError}
-              replyingPermissionId={conversation.replyingPermissionId}
-              onPermissionReply={conversation.respondToPermission}
-              onSend={conversation.submit}
-              onRetrySend={conversation.retryLast}
-              onStop={conversation.stop}
-              onRefreshMessages={conversation.refresh}
-              onNewSession={handleNewSession}
-              creatingSession={creatingSession}
-              commands={resources.commands}
-              effectiveModel={effectiveModel}
-              modelLabel={modelLabel}
-              onOpenModels={() => setActiveView("models")}
-              draft={draft}
-              onDraftChange={setDraft}
-            />
-          ) : null}
+          <WorkspaceTabs
+            activeView={activeView}
+            onNavigate={handleNavigate}
+            onAction={handleWorkspaceAction}
+            connected={connected}
+            creatingSession={creatingSession}
+          />
 
-          {activeView === "sessions" ? (
-            <SessionsView
-              sessions={displayedSessions}
-              project={activeProject}
-              selectedSessionId={activeSessionId}
-              onSelectSession={handleSelectSession}
-              onNewSession={handleNewSession}
-              creatingSession={creatingSession}
-              canRefresh={canRefresh}
-              onRetry={refresh}
-              connected={connected}
-              sessionActionsDisabled={sessionActionsDisabled}
-              showArchived={showArchived}
-              archivedCount={archivedCount}
-              onToggleArchived={() => setShowArchived((value) => !value)}
-              onRenameSession={renameSession}
-              onArchiveSession={handleArchiveSession}
-              onDeleteSession={deleteSession}
-            />
-          ) : null}
+          <div className="main-content">
+            <div className="view-pane" hidden={activeView !== "chat"}>
+              <ChatView
+                health={health}
+                connected={connected}
+                connection={connection}
+                canRefresh={canRefresh}
+                onRefresh={refresh}
+                session={selectedSession}
+                project={activeProject}
+                messages={conversation.messages}
+                phase={conversation.phase}
+                actionError={conversation.actionError}
+                lastSubmission={conversation.lastSubmission}
+                permissions={conversation.permissions}
+                permissionError={conversation.permissionError}
+                replyingPermissionId={conversation.replyingPermissionId}
+                onPermissionReply={conversation.respondToPermission}
+                onSend={conversation.submit}
+                onRetrySend={conversation.retryLast}
+                onStop={conversation.stop}
+                onRefreshMessages={conversation.refresh}
+                onNewSession={handleNewSession}
+                creatingSession={creatingSession}
+                commands={resources.commands}
+                effectiveModel={effectiveModel}
+                modelLabel={modelLabel}
+                onOpenModels={() => setActiveView("models")}
+                draft={draft}
+                onDraftChange={setDraft}
+              />
+            </div>
 
-          {activeView === "models" ? (
-            <ModelsView
-              models={resources.models}
-              preferredModel={validPreferredModel}
-              effectiveModel={effectiveModel}
-              onSelectModel={handleSelectModel}
-              onRefresh={resources.refresh}
-              connected={connected}
-              project={activeProject}
-            />
-          ) : null}
+            <div className="view-pane" hidden={activeView !== "files"}>
+              <FilesView
+                key={activeDirectory}
+                directory={activeDirectory}
+                connected={connected}
+                project={activeProject}
+                active={activeView === "files"}
+                intent={fileIntent}
+              />
+            </div>
 
-          {activeView === "changes" ? (
-            <ChangesView
-              changes={changes}
-              onRefresh={refreshChanges}
-              connected={connected}
-              project={activeProject}
-            />
-          ) : null}
+            <div className="view-pane" hidden={activeView !== "context"}>
+              <ContextView
+                session={selectedSession}
+                project={activeProject}
+                messages={conversation.messages}
+                providersData={resources.models.data}
+                effectiveModel={effectiveModel}
+                modelLabel={modelLabel}
+                phase={conversation.phase}
+                permissions={conversation.permissions}
+                connected={connected}
+                onRefresh={conversation.refresh}
+                onOpenChat={() => handleNavigate("chat")}
+                onNewSession={handleNewSession}
+                creatingSession={creatingSession}
+              />
+            </div>
 
-          {activeView === "settings" ? (
-            <SettingsView
-              health={health}
-              connection={connection}
-              connected={connected}
-              onRefresh={refresh}
-              canRefresh={canRefresh}
-              project={activeProject}
-              projects={projects}
-            />
-          ) : null}
+            {activeView === "sessions" ? (
+              <SessionsView
+                sessions={displayedSessions}
+                project={activeProject}
+                selectedSessionId={activeSessionId}
+                onSelectSession={handleSelectSession}
+                onNewSession={handleNewSession}
+                creatingSession={creatingSession}
+                canRefresh={canRefresh}
+                onRetry={refresh}
+                connected={connected}
+                sessionActionsDisabled={sessionActionsDisabled}
+                showArchived={showArchived}
+                archivedCount={archivedCount}
+                onToggleArchived={() => setShowArchived((value) => !value)}
+                onRenameSession={renameSession}
+                onArchiveSession={handleArchiveSession}
+                onDeleteSession={deleteSession}
+              />
+            ) : null}
+
+            {activeView === "models" ? (
+              <ModelsView
+                models={resources.models}
+                preferredModel={validPreferredModel}
+                effectiveModel={effectiveModel}
+                onSelectModel={handleSelectModel}
+                onRefresh={resources.refresh}
+                connected={connected}
+                project={activeProject}
+              />
+            ) : null}
+
+            {activeView === "changes" ? (
+              <ChangesView
+                changes={changes}
+                onRefresh={refreshChanges}
+                connected={connected}
+                project={activeProject}
+              />
+            ) : null}
+
+            {activeView === "settings" ? (
+              <SettingsView
+                health={health}
+                connection={connection}
+                connected={connected}
+                onRefresh={refresh}
+                canRefresh={canRefresh}
+                project={activeProject}
+                projects={projects}
+              />
+            ) : null}
+          </div>
         </main>
       </section>
 

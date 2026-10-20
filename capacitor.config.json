@@ -6,6 +6,12 @@
     "hostname": "localhost",
     "androidScheme": "https"
   },
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK",
+      "insetsHandling": "native"
+    }
+  },
   "cordova": {
     "accessOrigins": []
   }

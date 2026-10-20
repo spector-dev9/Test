@@ -15,6 +15,14 @@ currently selected OpenCode project.
 - Run project slash commands from the composer.
 - Choose an OpenCode model for new prompts and sessions.
 - Review uncommitted VCS files and patches for the active project.
+- Browse and search project files, preview text and binary metadata, and edit
+  text files with line numbers, tabs, and explicit save.
+- Create a new file by saving a safe full-file patch. The file is written only
+  after it has content.
+- Inspect real session context: message counts, model, latest-prompt token
+  usage, reported context limit, and cumulative session cost.
+- Use Chat, Files, and Context tabs, a workspace `+` action menu, and the
+  drawer navigation on small screens.
 - Inspect connection diagnostics and request-policy details.
 
 ## Requirements
@@ -45,8 +53,9 @@ npm run sync:android
 ```
 
 The test suite covers URL policy, native request validation, project discovery
-and scoping, session management, permissions, SDK request shapes, API error
-mapping, and workspace presentation helpers.
+and scoping, session management, permissions, file path/patch safety, token
+context summaries, SDK request shapes, API error mapping, and workspace
+presentation helpers.
 
 ## Android build
 
@@ -68,8 +77,9 @@ The app connects to `http://127.0.0.1:4096` by default. Set
 shapes still match the native transport allowlist. Native Android builds reject
 any other origin. Requests are restricted to health and project discovery,
 project-scoped session lists and messages, session create/update/delete,
-prompts, commands, abort, permissions and replies, providers, commands, and VCS
-status/diff.
+prompts, commands, abort, permissions and replies, providers, commands, VCS
+status/diff/apply, and project file listing, reading, and search. File writes
+are limited to validated single-file unified patches.
 
 Project-scoped requests must include exactly one `directory` query matching a
 project previously returned by the trusted project-list endpoint. The native
@@ -105,3 +115,16 @@ exception as part of debug-only work.
   policy permits only the exact loopback origin.
 - Archived sessions are filtered in the client because the current server's
   normal session list still includes them.
+- The server exposes no folder create, rename, delete, or move API. The app
+  therefore cannot create folders or rename/delete/move files.
+- The server patch API cannot create an empty file, so new files must have
+  content before Save. File writes require safe relative paths without spaces,
+  quotes, backslashes, or `.git` metadata; other files remain read-only in the
+  app.
+- Binary files are identified but not rendered. Text files larger than
+  1,000,000 characters are not opened on mobile.
+- Token usage appears only after the provider reports it in an assistant
+  message. The latest-prompt meter is not a live context-window measurement.
+- The keyboard/inset layout uses Capacitor SystemBars native handling and has
+  been validated by lint, tests, and builds, but not yet on a physical Android
+  device in this environment.

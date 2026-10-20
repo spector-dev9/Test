@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { CONNECTION_ERROR_KINDS } from "./connection.js";
+import { buildFilePatch } from "./files.js";
 import {
   createNativeFetch,
   MAX_REQUEST_BYTES,
@@ -308,6 +309,13 @@ function sessionItemUrl(
   return url.href;
 }
 
+function fileUrl(pathname = "/file", path = ".") {
+  const url = new URL(pathname, "http://127.0.0.1:4096");
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+  url.searchParams.set("path", path);
+  return url.href;
+}
+
 function jsonRequest(body, method = "POST") {
   return {
     method,
@@ -544,6 +552,113 @@ test("allows the phase 2 read endpoints", async () => {
     assert.equal(response.status, 200);
     assert.equal(http.calls.length, 1);
     assert.equal(http.calls[0].method, "GET");
+  }
+});
+
+test("allows scoped file browsing, search, and safe patch writes", async () => {
+  const findUrl = new URL(
+    "/find/file",
+    "http://127.0.0.1:4096",
+  );
+  findUrl.searchParams.set("directory", PROJECT_DIRECTORY);
+  findUrl.searchParams.set("query", "App");
+  findUrl.searchParams.set("type", "file");
+  findUrl.searchParams.set("limit", "50");
+
+  const reads = [
+    fileUrl("/file", "."),
+    fileUrl("/file/content", "src/App.jsx"),
+    findUrl.href,
+  ];
+
+  for (const url of reads) {
+    const http = createHttp({ status: 200, data: "[]", headers: {} });
+    const response = await createNativeFetch(http)(url);
+
+    assert.equal(response.status, 200);
+    assert.equal(http.calls.length, 1);
+    assert.equal(http.calls[0].method, "GET");
+  }
+
+  const patch = buildFilePatch({
+    path: "src/example.js",
+    previousContent: "one\n",
+    nextContent: "two\n",
+  });
+  const applyUrl = new URL(
+    "/vcs/apply",
+    "http://127.0.0.1:4096",
+  );
+  applyUrl.searchParams.set("directory", PROJECT_DIRECTORY);
+
+  const http = createHttp({ status: 200, data: "{}", headers: {} });
+  await createNativeFetch(http)(applyUrl.href, jsonRequest({ patch }));
+
+  assert.equal(http.calls.length, 1);
+  assert.equal(http.calls[0].method, "POST");
+  assert.deepEqual(http.calls[0].data, { patch });
+});
+
+test("rejects unsafe file paths, searches, and patches", async () => {
+  const invalidUrls = [
+    fileUrl("/file", "../secret"),
+    fileUrl("/file/content", "/etc/passwd"),
+    fileUrl("/file/content", "src/../secret"),
+    fileUrl("/file", ".").replace("path=.", "path=.").concat("&extra=1"),
+  ];
+
+  const findUrl = new URL(
+    "/find/file",
+    "http://127.0.0.1:4096",
+  );
+  findUrl.searchParams.set("directory", PROJECT_DIRECTORY);
+  findUrl.searchParams.set("query", "App");
+  findUrl.searchParams.set("type", "directory");
+  findUrl.searchParams.set("limit", "50");
+  invalidUrls.push(findUrl.href);
+
+  for (const url of invalidUrls) {
+    const http = createHttp();
+    await assert.rejects(createNativeFetch(http)(url), TypeError);
+    assert.equal(http.calls.length, 0);
+  }
+
+  const applyUrl = new URL(
+    "/vcs/apply",
+    "http://127.0.0.1:4096",
+  );
+  applyUrl.searchParams.set("directory", PROJECT_DIRECTORY);
+
+  const cases = [
+    { patch: "" },
+    { patch: "hello" },
+    { patch: "diff --git a/../secret b/../secret\n", extra: true },
+    {
+      patch:
+        "diff --git a/.git/config b/.git/config\n" +
+        "--- a/.git/config\n" +
+        "+++ b/.git/config\n" +
+        "@@ -1,0 +1,1 @@\n" +
+        "+unsafe\n",
+    },
+    {
+      patch:
+        "diff --git a/hook b/hook\n" +
+        "new file mode 120000\n" +
+        "--- /dev/null\n" +
+        "+++ b/hook\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+target\n",
+    },
+  ];
+
+  for (const body of cases) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(applyUrl.href, jsonRequest(body)),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
   }
 });
 
