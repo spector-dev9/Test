@@ -16,6 +16,7 @@ on:
       - "package-lock.json"
       - "capacitor.config.json"
       - "android/**"
+      - "scripts/**"
       - ".github/workflows/android-debug-apk.yml"
 
 permissions:
@@ -59,7 +60,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
-          packages: "platforms;android-36 build-tools;35.0.0 build-tools;36.0.0 platform-tools"
+          packages: "platforms;android-36 build-tools;35.0.0 build-tools;36.0.0 platform-tools ndk;27.2.12479018"
+
+      - name: Prepare embedded runtime
+        run: |
+          NDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          NDK_DIR="$(find "$NDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -n "$NDK_DIR"
+          python3 scripts/prepare-android-runtime.py --ndk "$NDK_DIR"
 
       - name: Sync Capacitor
         run: node ./node_modules/@capacitor/cli/bin/capacitor sync android

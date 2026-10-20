@@ -3698,6 +3698,163 @@ h2 {
   }
 }
 
+/* On-device runtime setup */
+.server-gate-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: max(20px, env(safe-area-inset-top)) 18px
+    max(20px, env(safe-area-inset-bottom));
+  background: rgba(9, 9, 12, 0.82);
+  backdrop-filter: blur(6px);
+}
+
+.server-gate {
+  width: min(420px, 100%);
+  padding: 28px 24px 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #19191f, #131317);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.server-gate-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 14px;
+  border: 1px solid rgba(130, 116, 234, 0.38);
+  border-radius: 16px;
+  color: #c4baff;
+  background: rgba(102, 86, 217, 0.13);
+  font-size: 26px;
+}
+
+.server-gate-icon.error {
+  border-color: rgba(223, 123, 123, 0.4);
+  color: #efbaba;
+  background: rgba(223, 123, 123, 0.1);
+}
+
+.server-gate h1 {
+  margin: 8px 0 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.server-gate-message {
+  margin: 12px auto 0;
+  max-width: 34ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.server-progress {
+  height: 7px;
+  margin: 22px 4px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #24242c;
+}
+
+.server-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6656d9, #9a8cff);
+  transition: width 0.25s ease;
+}
+
+.server-gate-progress {
+  margin: 9px 0 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-gate-note {
+  margin: 20px 0 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.server-gate-link {
+  margin-top: 14px;
+  padding: 4px 8px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.server-gate-link:hover {
+  color: var(--text);
+}
+
+.server-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 22px;
+}
+
+.settings-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.settings-runtime-actions .primary-button,
+.settings-runtime-actions .secondary-button,
+.settings-runtime-actions .danger-button {
+  min-height: 34px;
+  padding: 7px 11px;
+  font-size: 11px;
+}
+
+.settings-progress {
+  height: 5px;
+  margin: 12px 0 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #24242c;
+}
+
+.settings-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.settings-log {
+  max-height: 220px;
+  margin: 12px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: #101014;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

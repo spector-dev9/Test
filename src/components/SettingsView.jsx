@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { BROWSER_REQUEST_TIMEOUT_MS } from "../lib/connection";
+import { localServerLogs } from "../lib/localServer";
 import { MAX_RESPONSE_BYTES } from "../lib/nativeFetch";
 import {
   MAX_COMPOSER_CHARS,
@@ -23,6 +25,28 @@ function DetailRow({ label, children }) {
   );
 }
 
+function runtimeConnection(status, connected) {
+  if (status?.state === "error") {
+    return { tone: "offline", label: "Runtime error" };
+  }
+  if (["preparing", "downloading", "extracting", "starting"].includes(status?.state)) {
+    return { tone: "loading", label: "Starting" };
+  }
+  if (status?.state === "running") {
+    return {
+      tone: connected ? "online" : "loading",
+      label: connected ? "Running" : "Waiting",
+    };
+  }
+  if (status?.state === "stopped") {
+    return { tone: "offline", label: "Stopped" };
+  }
+  if (status?.state === "unavailable" || !status) {
+    return { tone: "offline", label: "Not supported" };
+  }
+  return { tone: "loading", label: "Preparing" };
+}
+
 export function SettingsView({
   health,
   connection,
@@ -31,6 +55,7 @@ export function SettingsView({
   canRefresh,
   project,
   projects,
+  localServer,
 }) {
   const native = Capacitor.isNativePlatform();
   const statusLabel = connected
@@ -38,6 +63,43 @@ export function SettingsView({
     : connection.tone === "offline"
       ? offlineLabel(health.errorKind)
       : "Checking";
+  const runtime = localServer ?? null;
+  const runtimeState = runtimeConnection(runtime, connected);
+  const runtimeBusy =
+    Boolean(runtime) &&
+    ["preparing", "downloading", "extracting", "starting"].includes(
+      runtime.state,
+    );
+  const [logs, setLogs] = useState("");
+  const [logsBusy, setLogsBusy] = useState(false);
+
+  async function showLogs() {
+    if (logs) {
+      setLogs("");
+      return;
+    }
+    setLogsBusy(true);
+    try {
+      setLogs((await localServerLogs()) || "No server output yet.");
+    } catch (failure) {
+      setLogs(failure?.message || "Server logs are unavailable.");
+    } finally {
+      setLogsBusy(false);
+    }
+  }
+
+  function repairRuntime() {
+    if (!runtime) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Remove the downloaded runtime and download it again? Your workspace and sessions stay on this device.",
+      )
+    ) {
+      return;
+    }
+    runtime.repair();
+  }
 
   return (
     <section className="page-view" aria-labelledby="settings-heading">
@@ -110,7 +172,7 @@ export function SettingsView({
           <h2>Mobile connection policy</h2>
           <dl className="detail-list">
             <DetailRow label="Native origin">
-              <code>http://127.0.0.1:4096</code>
+              <code>{OPENCODE_BASE_URL}</code>
             </DetailRow>
             <DetailRow label="Native timeouts">
               10s connect · 30s read
@@ -132,6 +194,108 @@ export function SettingsView({
           </p>
         </section>
       </div>
+
+      {native ? (
+        <div className="panel settings-card">
+          <div className="panel-heading">
+            <div>
+              <span className="panel-kicker">LOCAL RUNTIME</span>
+              <h2>OpenCode on this device</h2>
+            </div>
+            <span className={`status-chip ${runtimeState.tone}`}>
+              <span className={`dot ${runtimeState.tone}`} />
+              {runtimeState.label}
+            </span>
+          </div>
+
+          <dl className="detail-list">
+            <DetailRow label="Status">
+              {runtime?.message || "No local runtime has started yet."}
+            </DetailRow>
+            <DetailRow label="Runtime version">
+              {runtime?.version ? `v${runtime.version}` : "Not installed"}
+            </DetailRow>
+            <DetailRow label="Server URL">
+              <code>{OPENCODE_BASE_URL}</code>
+            </DetailRow>
+            <DetailRow label="Workspace">
+              <code>
+                {runtime?.workspace || projectPathLabel(project)}
+              </code>
+            </DetailRow>
+          </dl>
+
+          {runtimeBusy ? (
+            <div
+              className="settings-progress"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={runtime.progress}
+              aria-label="Runtime setup progress"
+            >
+              <span style={{ width: `${Math.max(2, runtime.progress)}%` }} />
+            </div>
+          ) : null}
+
+          {runtime?.error ? (
+            <p className="panel-note">{runtime.error}</p>
+          ) : null}
+
+          <div className="settings-runtime-actions">
+            {runtime?.state === "running" ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={runtime.stop}
+              >
+                Stop server
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={runtime?.retry}
+                disabled={runtimeBusy || !runtime}
+              >
+                {runtime?.state === "error" ? "Try again" : "Start runtime"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={runtime?.restart}
+              disabled={runtimeBusy || !runtime}
+            >
+              Restart
+            </button>
+            <button
+              type="button"
+              className="danger-button"
+              onClick={repairRuntime}
+              disabled={runtimeBusy || !runtime}
+            >
+              Repair runtime
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={showLogs}
+              disabled={logsBusy || !runtime}
+            >
+              {logs ? "Hide logs" : logsBusy ? "Reading…" : "Server logs"}
+            </button>
+          </div>
+
+          {logs ? <pre className="settings-log">{logs}</pre> : null}
+
+          <p className="panel-note">
+            The runtime and workspace live in app-private storage. Provider
+            credentials are only stored in that local runtime; this app does
+            not read credentials from outside its sandbox.
+          </p>
+        </div>
+      ) : null}
 
       <div className="panel settings-card diagnostics-card">
         <span className="panel-kicker">DIAGNOSTICS</span>

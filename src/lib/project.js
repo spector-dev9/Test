@@ -1,11 +1,11 @@
 export const PROJECT_DIRECTORY =
-  "/data/data/com.termux/files/home/projects/opencode-mobile";
+  "/data/user/0/com.opencode.mobile/files/workspace";
 
 export const PROJECT_STORAGE_KEY = "opencode-mobile.project-id";
 
 export const FALLBACK_PROJECT = Object.freeze({
   id: "local-project",
-  name: "opencode-mobile",
+  name: "Workspace",
   worktree: PROJECT_DIRECTORY,
 });
 

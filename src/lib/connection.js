@@ -1,4 +1,4 @@
-export const DEFAULT_OPENCODE_URL = "http://127.0.0.1:4096";
+export const DEFAULT_OPENCODE_URL = "http://127.0.0.1:4097";
 export const NATIVE_OPENCODE_ORIGIN = DEFAULT_OPENCODE_URL;
 export const BROWSER_REQUEST_TIMEOUT_MS = 15000;
 

@@ -14,10 +14,10 @@ import {
   resetProjectDirectoryScope,
 } from "./projectScope.js";
 
-const HEALTH_URL = "http://127.0.0.1:4096/global/health";
+const HEALTH_URL = "http://127.0.0.1:4097/global/health";
 
 function sessionUrl(directory = PROJECT_DIRECTORY) {
-  const url = new URL("/session", "http://127.0.0.1:4096");
+  const url = new URL("/session", "http://127.0.0.1:4097");
   url.searchParams.set("directory", directory);
   return url.href;
 }
@@ -101,7 +101,7 @@ test("accepts the real SDK health and session request shapes", async () => {
     },
   };
   const client = createOpencodeClient({
-    baseUrl: "http://127.0.0.1:4096",
+    baseUrl: "http://127.0.0.1:4097",
     fetch: createNativeFetch(http),
   });
 
@@ -131,16 +131,16 @@ test("rejects unsupported methods before contacting Capacitor", async () => {
 
 test("rejects other origins, ports, methods, and paths", async () => {
   const urls = [
-    "http://localhost:4096/global/health",
-    "http://127.0.0.1:4097/global/health",
-    "https://127.0.0.1:4096/global/health",
-    "http://127.0.0.1:4096/global/health?probe=1",
-    "http://127.0.0.1:4096/global/health#fragment",
-    "http://127.0.0.1:4096/global/health/",
-    "http://127.0.0.1:4096/session",
-    "http://127.0.0.1:4096/session/",
-    "http://user:pass@127.0.0.1:4096/global/health",
-    "http://127.0.0.1:4096/experimental/session",
+    "http://localhost:4097/global/health",
+    "http://127.0.0.1:4096/global/health",
+    "https://127.0.0.1:4097/global/health",
+    "http://127.0.0.1:4097/global/health?probe=1",
+    "http://127.0.0.1:4097/global/health#fragment",
+    "http://127.0.0.1:4097/global/health/",
+    "http://127.0.0.1:4097/session",
+    "http://127.0.0.1:4097/session/",
+    "http://user:pass@127.0.0.1:4097/global/health",
+    "http://127.0.0.1:4097/experimental/session",
   ];
 
   for (const url of urls) {
@@ -154,11 +154,11 @@ test("rejects other origins, ports, methods, and paths", async () => {
 
 test("rejects missing, wrong, duplicate, or extra session parameters", async () => {
   const urls = [
-    "http://127.0.0.1:4096/session",
+    "http://127.0.0.1:4097/session",
     sessionUrl("/tmp"),
     `${sessionUrl()}&directory=${encodeURIComponent(PROJECT_DIRECTORY)}`,
     `${sessionUrl()}&limit=10`,
-    `http://127.0.0.1:4096/session?workspace=${encodeURIComponent(PROJECT_DIRECTORY)}`,
+    `http://127.0.0.1:4097/session?workspace=${encodeURIComponent(PROJECT_DIRECTORY)}`,
   ];
 
   for (const url of urls) {
@@ -177,7 +177,7 @@ test("rejects redirects even if Capacitor returns one", async () => {
   const http = createHttp({
     status: 302,
     data: "",
-    headers: { location: "http://127.0.0.1:4096/session" },
+    headers: { location: "http://127.0.0.1:4097/session" },
   });
   const nativeFetch = createNativeFetch(http);
 
@@ -298,7 +298,7 @@ function sessionItemUrl(
 ) {
   const url = new URL(
     `/session/${sessionID}/${action}`,
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   url.searchParams.set("directory", directory);
 
@@ -310,7 +310,7 @@ function sessionItemUrl(
 }
 
 function fileUrl(pathname = "/file", path = ".") {
-  const url = new URL(pathname, "http://127.0.0.1:4096");
+  const url = new URL(pathname, "http://127.0.0.1:4097");
   url.searchParams.set("directory", PROJECT_DIRECTORY);
   url.searchParams.set("path", path);
   return url.href;
@@ -327,7 +327,7 @@ function jsonRequest(body, method = "POST") {
 function sessionResourceUrl(sessionID = "ses_test123") {
   const url = new URL(
     `/session/${sessionID}`,
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   url.searchParams.set("directory", PROJECT_DIRECTORY);
   return url.href;
@@ -336,7 +336,7 @@ function sessionResourceUrl(sessionID = "ses_test123") {
 function permissionReplyUrl(requestID = "perm_1") {
   const url = new URL(
     `/permission/${requestID}/reply`,
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   url.searchParams.set("directory", PROJECT_DIRECTORY);
   return url.href;
@@ -443,7 +443,7 @@ test("allows validated session create, prompt, command, and abort writes", async
 });
 
 test("allows validated PTY create, resize, and close writes", async () => {
-  const base = new URL("/pty", "http://127.0.0.1:4096");
+  const base = new URL("/pty", "http://127.0.0.1:4097");
   base.searchParams.set("directory", PROJECT_DIRECTORY);
   const terminal = {
     id: "pty_abc123XYZ",
@@ -471,7 +471,7 @@ test("allows validated PTY create, resize, and close writes", async () => {
 
   const item = new URL(
     `/pty/${terminal.id}`,
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   item.searchParams.set("directory", PROJECT_DIRECTORY);
   const resized = await nativeFetch(
@@ -491,11 +491,11 @@ test("allows validated PTY create, resize, and close writes", async () => {
 });
 
 test("rejects malformed PTY writes", async () => {
-  const base = new URL("/pty", "http://127.0.0.1:4096");
+  const base = new URL("/pty", "http://127.0.0.1:4097");
   base.searchParams.set("directory", PROJECT_DIRECTORY);
   const item = new URL(
     "/pty/pty_abc123XYZ",
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   item.searchParams.set("directory", PROJECT_DIRECTORY);
   const cases = [
@@ -523,7 +523,7 @@ test("rejects malformed PTY writes", async () => {
       url: new URL(
         "/pty/pty_bad-id?directory=" +
           encodeURIComponent(PROJECT_DIRECTORY),
-        "http://127.0.0.1:4096",
+        "http://127.0.0.1:4097",
       ).href,
       body: { size: { cols: 90, rows: 30 } },
     },
@@ -549,7 +549,7 @@ test("allows project discovery without a project query", async () => {
     headers: {},
   });
   const response = await createNativeFetch(http)(
-    "http://127.0.0.1:4096/project",
+    "http://127.0.0.1:4097/project",
   );
 
   assert.equal(response.status, 200);
@@ -559,7 +559,7 @@ test("allows project discovery without a project query", async () => {
   const rejectedHttp = createHttp();
   await assert.rejects(
     createNativeFetch(rejectedHttp)(
-      `http://127.0.0.1:4096/project?directory=${encodeURIComponent(PROJECT_DIRECTORY)}`,
+      `http://127.0.0.1:4097/project?directory=${encodeURIComponent(PROJECT_DIRECTORY)}`,
     ),
     /project query/,
   );
@@ -570,7 +570,7 @@ test("allows a project directory only after discovery registers it", async (t) =
   t.after(resetProjectDirectoryScope);
 
   const directory = "/tmp/discovered-project";
-  const url = new URL("/session", "http://127.0.0.1:4096");
+  const url = new URL("/session", "http://127.0.0.1:4097");
   url.searchParams.set("directory", directory);
 
   const unknownHttp = createHttp();
@@ -667,18 +667,18 @@ test("rejects invalid session updates and permission replies", async () => {
 
 test("allows the phase 2 read endpoints", async () => {
   const urls = [
-    "http://127.0.0.1:4096/permission?directory=" +
+    "http://127.0.0.1:4097/permission?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
     sessionItemUrl("message", { query: { limit: 200 } }),
-    "http://127.0.0.1:4096/session/status?directory=" +
+    "http://127.0.0.1:4097/session/status?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
-    "http://127.0.0.1:4096/config/providers?directory=" +
+    "http://127.0.0.1:4097/config/providers?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
-    "http://127.0.0.1:4096/command?directory=" +
+    "http://127.0.0.1:4097/command?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
-    "http://127.0.0.1:4096/vcs/status?directory=" +
+    "http://127.0.0.1:4097/vcs/status?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
-    "http://127.0.0.1:4096/vcs/diff?directory=" +
+    "http://127.0.0.1:4097/vcs/diff?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY) +
       "&mode=git&context=3",
   ];
@@ -696,7 +696,7 @@ test("allows the phase 2 read endpoints", async () => {
 test("allows scoped file browsing, search, and safe patch writes", async () => {
   const findUrl = new URL(
     "/find/file",
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   findUrl.searchParams.set("directory", PROJECT_DIRECTORY);
   findUrl.searchParams.set("query", "App");
@@ -725,7 +725,7 @@ test("allows scoped file browsing, search, and safe patch writes", async () => {
   });
   const applyUrl = new URL(
     "/vcs/apply",
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   applyUrl.searchParams.set("directory", PROJECT_DIRECTORY);
 
@@ -747,7 +747,7 @@ test("rejects unsafe file paths, searches, and patches", async () => {
 
   const findUrl = new URL(
     "/find/file",
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   findUrl.searchParams.set("directory", PROJECT_DIRECTORY);
   findUrl.searchParams.set("query", "App");
@@ -763,7 +763,7 @@ test("rejects unsafe file paths, searches, and patches", async () => {
 
   const applyUrl = new URL(
     "/vcs/apply",
-    "http://127.0.0.1:4096",
+    "http://127.0.0.1:4097",
   );
   applyUrl.searchParams.set("directory", PROJECT_DIRECTORY);
 
@@ -982,12 +982,12 @@ test("rejects invalid read query combinations", async () => {
   const urls = [
     sessionItemUrl("message", { query: { limit: 500 } }),
     sessionItemUrl("message", { query: { before: "msg_1" } }),
-    "http://127.0.0.1:4096/vcs/diff?directory=" +
+    "http://127.0.0.1:4097/vcs/diff?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
-    "http://127.0.0.1:4096/vcs/diff?directory=" +
+    "http://127.0.0.1:4097/vcs/diff?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY) +
       "&mode=git&context=21",
-    "http://127.0.0.1:4096/vcs/diff?directory=" +
+    "http://127.0.0.1:4097/vcs/diff?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY) +
       "&mode=working",
   ];
@@ -1035,7 +1035,7 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     },
   };
   const client = createOpencodeClient({
-    baseUrl: "http://127.0.0.1:4096",
+    baseUrl: "http://127.0.0.1:4097",
     fetch: createNativeFetch(http),
   });
   const sessionID = "ses_test123";

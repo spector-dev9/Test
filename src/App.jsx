@@ -6,10 +6,12 @@ import { ContextView } from "./components/ContextView";
 import { FilesView } from "./components/FilesView";
 import { ModelsView } from "./components/ModelsView";
 import { SessionsView } from "./components/SessionsView";
+import { LocalServerGate } from "./components/LocalServerGate";
 import { SettingsView } from "./components/SettingsView";
 import { SidebarContent } from "./components/Sidebar";
 import { TerminalView } from "./components/TerminalView";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
+import { useLocalServer } from "./hooks/useLocalServer";
 import { useOpenCodeOverview } from "./hooks/useOpenCodeOverview";
 import { useOpenCodeProjects } from "./hooks/useOpenCodeProjects";
 import { useSessionConversation } from "./hooks/useSessionConversation";
@@ -100,6 +102,9 @@ export default function App() {
     projects,
     refresh: refreshProjects,
   } = useOpenCodeProjects();
+  const localServer = useLocalServer();
+  const retryLocalServer = localServer.retry;
+  const [serverGateDismissed, setServerGateDismissed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState("chat");
   const [selectedSessionId, setSelectedSessionId] = useState(null);
@@ -115,15 +120,45 @@ export default function App() {
   const wasMenuOpen = useRef(false);
 
   const connected = Boolean(health.data?.healthy);
+  const showServerGate =
+    localServer.supported && !connected && !serverGateDismissed;
+
+  useEffect(() => {
+    if (localServer.state === "running") refreshProjects();
+  }, [localServer.state, refreshProjects]);
+
+  useEffect(() => {
+    if (!localServer.supported || localServer.state !== "running" || connected) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(refreshProjects, 2500);
+    return () => window.clearInterval(timer);
+  }, [connected, localServer.state, localServer.supported, refreshProjects]);
+
+  const scopedProjects = useMemo(() => {
+    const allowed = projects.data.filter(
+      (project) =>
+        typeof project.worktree === "string" &&
+        (project.worktree === PROJECT_DIRECTORY ||
+          project.worktree.startsWith(`${PROJECT_DIRECTORY}/`)),
+    );
+
+    return {
+      ...projects,
+      data: allowed.length > 0 ? allowed : [FALLBACK_PROJECT],
+    };
+  }, [projects]);
+
   const activeProject = useMemo(() => {
-    const available = projects.data;
+    const available = scopedProjects.data;
     return (
       available.find((project) => project.id === selectedProjectId) ??
       available.find((project) => project.worktree === PROJECT_DIRECTORY) ??
       available[0] ??
       FALLBACK_PROJECT
     );
-  }, [projects.data, selectedProjectId]);
+  }, [scopedProjects.data, selectedProjectId]);
   const activeDirectory = activeProject.worktree;
 
   const overview = useOpenCodeOverview({
@@ -358,7 +393,7 @@ export default function App() {
         return;
       }
 
-      if (!projects.data.some((project) => project.id === projectId)) {
+      if (!scopedProjects.data.some((project) => project.id === projectId)) {
         return;
       }
 
@@ -372,7 +407,7 @@ export default function App() {
     [
       activeProject.id,
       creatingSession,
-      projects.data,
+      scopedProjects.data,
       sessionActionsDisabled,
     ],
   );
@@ -403,6 +438,17 @@ export default function App() {
     setActiveView(view);
     setMenuOpen(false);
   }, []);
+
+  const handleOpenRuntimeSettings = useCallback(() => {
+    setServerGateDismissed(true);
+    setActiveView("settings");
+    setMenuOpen(false);
+  }, []);
+
+  const handleRetryRuntime = useCallback(() => {
+    setServerGateDismissed(false);
+    retryLocalServer();
+  }, [retryLocalServer]);
 
   const handleWorkspaceAction = useCallback(
     (action) => {
@@ -452,7 +498,7 @@ export default function App() {
     createError,
     connected,
     sessionActionsDisabled,
-    projects,
+    projects: scopedProjects,
     activeProject,
     onSelectProject: handleSelectProject,
   };
@@ -638,12 +684,22 @@ export default function App() {
                 onRefresh={refresh}
                 canRefresh={canRefresh}
                 project={activeProject}
-                projects={projects}
+                projects={scopedProjects}
+                localServer={localServer}
               />
             ) : null}
           </div>
         </main>
       </section>
+
+      {showServerGate ? (
+        <LocalServerGate
+          status={localServer}
+          connected={connected}
+          onRetry={handleRetryRuntime}
+          onOpenSettings={handleOpenRuntimeSettings}
+        />
+      ) : null}
 
       {menuOpen ? (
         <div

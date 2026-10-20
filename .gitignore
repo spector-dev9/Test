@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated Android runtime artifacts (scripts/prepare-android-runtime.py)
+android/app/src/main/jniLibs/
+android/app/src/main/assets/runtime/cert.pem
+
+# Python bytecode
+__pycache__/
+*.pyc

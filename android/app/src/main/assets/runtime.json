@@ -1,0 +1,19 @@
+{
+  "version": "1.19.3",
+  "url": "https://github.com/C04-wq/opencode-termux/releases/download/v1.19.3/opencode-termux-aarch64.tar.gz",
+  "sha256": "cd0d834225a190f6b2c959c3076cf0b2e7e40d589de6802c91507de702e16748",
+  "loader": "ld-musl-aarch64.so.1",
+  "binary": "opencode",
+  "required": [
+    "opencode",
+    "ld-musl-aarch64.so.1",
+    "libc.musl-aarch64.so.1",
+    "libgcc_s.so.1",
+    "libstdc++.so.6",
+    "libstdc++.so.6.runtime"
+  ],
+  "termuxPrefix": "/data/data/com.termux/files/usr",
+  "termuxResolver": "/data/data/com.termux/files/usr/etc/resolv.conf",
+  "androidPrefix": "/data/data/com.opencode.mobile/",
+  "androidResolver": "/data/data/com.opencode.mobile/files/.r"
+}

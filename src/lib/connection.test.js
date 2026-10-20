@@ -12,7 +12,7 @@ import {
 } from "./connection.js";
 
 test("uses the loopback default for browser and native URLs", () => {
-  assert.equal(DEFAULT_OPENCODE_URL, "http://127.0.0.1:4096");
+  assert.equal(DEFAULT_OPENCODE_URL, "http://127.0.0.1:4097");
   assert.equal(NATIVE_OPENCODE_ORIGIN, DEFAULT_OPENCODE_URL);
   assert.equal(validateOpenCodeBaseUrl(DEFAULT_OPENCODE_URL), null);
   assert.equal(
@@ -23,11 +23,11 @@ test("uses the loopback default for browser and native URLs", () => {
 
 test("rejects native URL configuration that conflicts with the allowlist", () => {
   const mismatches = [
-    "http://localhost:4096",
-    "http://127.0.0.1:4097",
-    "https://127.0.0.1:4096",
-    "http://127.0.0.1:4096/api",
-    "http://127.0.0.1:4096/?probe=1",
+    "http://localhost:4097",
+    "http://127.0.0.1:4096",
+    "https://127.0.0.1:4097",
+    "http://127.0.0.1:4097/api",
+    "http://127.0.0.1:4097/?probe=1",
   ];
 
   for (const baseUrl of mismatches) {
@@ -36,24 +36,24 @@ test("rejects native URL configuration that conflicts with the allowlist", () =>
   }
 
   assert.match(
-    validateOpenCodeBaseUrl("http://user:pass@127.0.0.1:4096", {
+    validateOpenCodeBaseUrl("http://user:pass@127.0.0.1:4097", {
       native: true,
     }),
     /must not contain credentials/,
   );
   assert.doesNotMatch(
-    validateOpenCodeBaseUrl("http://user:pass@127.0.0.1:4096", {
+    validateOpenCodeBaseUrl("http://user:pass@127.0.0.1:4097", {
       native: true,
     }),
     /user|pass/,
   );
 
   assert.equal(
-    validateOpenCodeBaseUrl("http://localhost:4096", { native: false }),
+    validateOpenCodeBaseUrl("http://localhost:4097", { native: false }),
     null,
   );
   assert.match(
-    validateOpenCodeBaseUrl("ftp://127.0.0.1:4096", { native: true }),
+    validateOpenCodeBaseUrl("ftp://127.0.0.1:4097", { native: true }),
     /HTTP or HTTPS/,
   );
 });
