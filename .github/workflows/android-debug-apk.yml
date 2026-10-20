@@ -82,6 +82,7 @@ jobs:
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/arm64-v8a/(libgit|libcurl|libpcre2-8|libgit_remote_http)\.so'
 
       - name: Upload debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

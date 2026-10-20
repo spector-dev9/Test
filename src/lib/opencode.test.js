@@ -272,7 +272,7 @@ test("creates project sessions with validated model and title", async () => {
 
   const session = await api.createProjectSession(PROJECT_DIRECTORY, {
     title: "  Mobile session  ",
-    model: { providerID: "provider", modelID: "model" },
+    model: { providerID: "provider", modelID: "model", variant: "high" },
   });
 
   assert.equal(session.id, "ses_test123");
@@ -280,7 +280,7 @@ test("creates project sessions with validated model and title", async () => {
     {
       directory: PROJECT_DIRECTORY,
       title: "Mobile session",
-      model: { id: "model", providerID: "provider" },
+      model: { id: "model", providerID: "provider", variant: "high" },
     },
   ]);
 
@@ -288,6 +288,18 @@ test("creates project sessions with validated model and title", async () => {
     api.createProjectSession(PROJECT_DIRECTORY, {
       title: "x",
       model: { providerID: "../bad", modelID: "model" },
+    }),
+    /selected model is invalid/,
+  );
+
+  await assert.rejects(
+    api.createProjectSession(PROJECT_DIRECTORY, {
+      title: "x",
+      model: {
+        providerID: "provider",
+        modelID: "model",
+        variant: "bad variant",
+      },
     }),
     /selected model is invalid/,
   );
@@ -429,13 +441,13 @@ test("sends prompts, commands, and abort requests with project scope", async () 
 
   await api.sendPromptAsync(PROJECT_DIRECTORY, "ses_test123", {
     text: "  Inspect this project.  ",
-    model: { providerID: "provider", modelID: "model" },
+    model: { providerID: "provider", modelID: "model", variant: "low" },
     agent: "build",
   });
   await api.sendCommand(PROJECT_DIRECTORY, "ses_test123", {
     command: "init",
     arguments: "smaller",
-    model: { providerID: "provider", modelID: "model" },
+    model: { providerID: "provider", modelID: "model", variant: "max" },
     agent: "build",
   });
   await api.runProjectShell(PROJECT_DIRECTORY, "ses_test123", {
@@ -451,6 +463,7 @@ test("sends prompts, commands, and abort requests with project scope", async () 
         directory: PROJECT_DIRECTORY,
         parts: [{ type: "text", text: "Inspect this project." }],
         model: { providerID: "provider", modelID: "model" },
+        variant: "low",
         agent: "build",
       },
     ],
@@ -462,6 +475,7 @@ test("sends prompts, commands, and abort requests with project scope", async () 
         command: "init",
         arguments: "smaller",
         model: "provider/model",
+        variant: "max",
         agent: "build",
       },
     ],
@@ -634,6 +648,57 @@ test("loads providers, commands, and VCS data with validated options", async () 
     api.getVcsDiff(PROJECT_DIRECTORY, { mode: "git", context: 99 }),
     /diff context is invalid/,
   );
+});
+
+test("loads connected providers and starts GitHub Copilot sign-in", async () => {
+  const calls = [];
+  const api = createOpenCodeApi({
+    provider: {
+      list: async (parameters) => {
+        calls.push(["providers", parameters]);
+        return fulfilled({
+          all: [],
+          default: {},
+          connected: ["github-copilot", "opencode", "github-copilot", 7],
+        });
+      },
+      oauth: {
+        authorize: async (parameters) => {
+          calls.push(["authorize", parameters]);
+          return fulfilled({
+            url: "https://github.com/login/device",
+            method: "auto",
+            instructions: "Enter code: ABCD-1234",
+          });
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await api.listConnectedProviders(PROJECT_DIRECTORY),
+    ["github-copilot", "opencode"],
+  );
+  assert.deepEqual(
+    await api.authorizeGitHubCopilot(PROJECT_DIRECTORY),
+    {
+      url: "https://github.com/login/device",
+      instructions: "Enter code: ABCD-1234",
+      method: "auto",
+    },
+  );
+  assert.deepEqual(calls, [
+    ["providers", { directory: PROJECT_DIRECTORY }],
+    [
+      "authorize",
+      {
+        providerID: "github-copilot",
+        directory: PROJECT_DIRECTORY,
+        method: 0,
+        inputs: { deploymentType: "github.com" },
+      },
+    ],
+  ]);
 });
 
 test("loads project files, searches, and applies safe patches", async () => {

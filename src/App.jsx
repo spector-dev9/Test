@@ -24,18 +24,21 @@ import {
   FALLBACK_PROJECT,
   PROJECT_DIRECTORY,
   PROJECT_STORAGE_KEY,
+  normalizeProjectDirectory,
 } from "./lib/project";
+import { registerProjectDirectories } from "./lib/projectScope";
 import {
   buildSessionTitle,
   describeServer,
-  findModel,
   formatModelLabel,
+  isModelSelectionValid,
   isSessionArchived,
   offlineLabel,
   resolveEffectiveModel,
 } from "./lib/workspace";
 
 const MODEL_STORAGE_KEY = "opencode-mobile.preferred-model";
+const WORKSPACE_STORAGE_KEY = "opencode-mobile.workspace-directory";
 
 function readStoredModel() {
   if (typeof window === "undefined") return null;
@@ -50,7 +53,13 @@ function readStoredModel() {
       typeof value.providerID === "string" &&
       typeof value.modelID === "string"
     ) {
-      return value;
+      return {
+        providerID: value.providerID,
+        modelID: value.modelID,
+        ...(typeof value.variant === "string" && value.variant
+          ? { variant: value.variant }
+          : {}),
+      };
     }
   } catch {
     return null;
@@ -73,6 +82,39 @@ function storeModel(model) {
   }
 }
 
+function readStoredWorkspaceDirectory() {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const directory = normalizeProjectDirectory(
+      window.localStorage.getItem(WORKSPACE_STORAGE_KEY),
+    );
+
+    if (directory && directory !== PROJECT_DIRECTORY) {
+      registerProjectDirectories([directory]);
+      return directory;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function storeWorkspaceDirectory(directory) {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (directory) {
+      window.localStorage.setItem(WORKSPACE_STORAGE_KEY, directory);
+    } else {
+      window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    }
+  } catch {
+    return;
+  }
+}
+
 function readStoredProjectId() {
   if (typeof window === "undefined") return null;
 
@@ -87,10 +129,14 @@ function readStoredProjectId() {
 }
 
 function storeProjectId(projectId) {
-  if (typeof window === "undefined" || !projectId) return;
+  if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
+    if (projectId) {
+      window.localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
+    } else {
+      window.localStorage.removeItem(PROJECT_STORAGE_KEY);
+    }
   } catch {
     return;
   }
@@ -109,6 +155,9 @@ export default function App() {
   const [activeView, setActiveView] = useState("chat");
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const [preferredModel, setPreferredModel] = useState(readStoredModel);
+  const [workspaceDirectory, setWorkspaceDirectory] = useState(
+    readStoredWorkspaceDirectory,
+  );
   const [selectedProjectId, setSelectedProjectId] = useState(
     readStoredProjectId,
   );
@@ -136,29 +185,59 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [connected, localServer.state, localServer.supported, refreshProjects]);
 
+  const workspaceProject = useMemo(() => {
+    if (!workspaceDirectory) return null;
+
+    const parts = workspaceDirectory.split("/").filter(Boolean);
+
+    return {
+      id: "device-workspace",
+      name: parts[parts.length - 1] ?? "Workspace",
+      worktree: workspaceDirectory,
+    };
+  }, [workspaceDirectory]);
+
   const scopedProjects = useMemo(() => {
+    const scopeDirectory = workspaceDirectory ?? PROJECT_DIRECTORY;
     const allowed = projects.data.filter(
       (project) =>
         typeof project.worktree === "string" &&
-        (project.worktree === PROJECT_DIRECTORY ||
-          project.worktree.startsWith(`${PROJECT_DIRECTORY}/`)),
+        (project.worktree === scopeDirectory ||
+          project.worktree.startsWith(`${scopeDirectory}/`)),
     );
+
+    let data = allowed;
+
+    if (workspaceProject) {
+      const synthetic = allowed.some(
+        (project) => project.worktree === workspaceProject.worktree,
+      )
+        ? []
+        : [workspaceProject];
+      data = [...synthetic, ...allowed];
+    }
 
     return {
       ...projects,
-      data: allowed.length > 0 ? allowed : [FALLBACK_PROJECT],
+      data:
+        data.length > 0
+          ? data
+          : [workspaceProject ?? FALLBACK_PROJECT],
     };
-  }, [projects]);
+  }, [projects, workspaceDirectory, workspaceProject]);
 
   const activeProject = useMemo(() => {
     const available = scopedProjects.data;
+    const preferredDirectory = workspaceDirectory ?? PROJECT_DIRECTORY;
+
     return (
       available.find((project) => project.id === selectedProjectId) ??
-      available.find((project) => project.worktree === PROJECT_DIRECTORY) ??
+      available.find((project) => project.worktree === preferredDirectory) ??
       available[0] ??
+      workspaceProject ??
       FALLBACK_PROJECT
     );
-  }, [scopedProjects.data, selectedProjectId]);
+  }, [scopedProjects.data, selectedProjectId, workspaceDirectory, workspaceProject]);
   const activeDirectory = activeProject.worktree;
 
   const overview = useOpenCodeOverview({
@@ -254,7 +333,7 @@ export default function App() {
   const validPreferredModel = useMemo(() => {
     if (!preferredModel) return null;
     if (!resources.models.data) return preferredModel;
-    return findModel(resources.models.data, preferredModel)
+    return isModelSelectionValid(resources.models.data, preferredModel)
       ? preferredModel
       : null;
   }, [preferredModel, resources.models.data]);
@@ -412,6 +491,36 @@ export default function App() {
     ],
   );
 
+  const handleSelectWorkspace = useCallback(
+    (directory) => {
+      const normalized = normalizeProjectDirectory(directory);
+
+      if (!normalized) {
+        return { ok: false, error: "That folder path is not supported." };
+      }
+
+      const next = normalized === PROJECT_DIRECTORY ? null : normalized;
+
+      if (next === workspaceDirectory) {
+        return { ok: true };
+      }
+
+      if (next) registerProjectDirectories([next]);
+
+      setWorkspaceDirectory(next);
+      storeWorkspaceDirectory(next);
+      setSelectedProjectId(null);
+      storeProjectId(null);
+      setSelectedSessionId(null);
+      setDraft("");
+      setActiveView("chat");
+      setMenuOpen(false);
+
+      return { ok: true };
+    },
+    [workspaceDirectory],
+  );
+
   const handleArchiveSession = useCallback(
     async (sessionID, archived) => {
       const result = await setSessionArchived(sessionID, archived);
@@ -481,6 +590,16 @@ export default function App() {
     setPreferredModel(model);
     storeModel(model);
     setActiveView("chat");
+  }, []);
+
+  const handleSelectVariant = useCallback((model, variant) => {
+    const next = {
+      providerID: model.providerID,
+      modelID: model.modelID,
+      ...(variant ? { variant } : {}),
+    };
+    setPreferredModel(next);
+    storeModel(next);
   }, []);
 
   const sharedSidebarProps = {
@@ -661,6 +780,7 @@ export default function App() {
                 preferredModel={validPreferredModel}
                 effectiveModel={effectiveModel}
                 onSelectModel={handleSelectModel}
+                onSelectVariant={handleSelectVariant}
                 onRefresh={resources.refresh}
                 connected={connected}
                 project={activeProject}
@@ -686,6 +806,10 @@ export default function App() {
                 project={activeProject}
                 projects={scopedProjects}
                 localServer={localServer}
+                workspaceDirectory={workspaceDirectory}
+                onSelectWorkspace={handleSelectWorkspace}
+                onProjectsChanged={refreshProjects}
+                onProvidersChanged={resources.refresh}
               />
             ) : null}
           </div>

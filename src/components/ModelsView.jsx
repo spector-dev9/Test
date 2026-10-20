@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { projectLabel } from "../lib/project";
 import {
+  findModel,
   formatModelLabel,
+  formatVariantLabel,
   normalizeProviders,
 } from "../lib/workspace";
 
@@ -25,6 +27,7 @@ export function ModelsView({
   preferredModel,
   effectiveModel,
   onSelectModel,
+  onSelectVariant,
   onRefresh,
   connected,
   project,
@@ -34,6 +37,8 @@ export function ModelsView({
     [models.data],
   );
   const activeModel = preferredModel ?? effectiveModel;
+  const activeModelInfo = findModel(models.data, activeModel);
+  const variants = activeModelInfo?.variants ?? [];
 
   return (
     <section className="page-view" aria-labelledby="models-heading">
@@ -60,6 +65,40 @@ export function ModelsView({
         <div>
           <span className="panel-kicker">CURRENT SELECTION</span>
           <strong>{formatModelLabel(activeModel, models.data)}</strong>
+          {activeModel && variants.length > 0 ? (
+            <div className="variant-picker">
+              <span className="variant-label">Reasoning effort</span>
+              <div
+                className="variant-row"
+                role="group"
+                aria-label="Reasoning effort"
+              >
+                <button
+                  type="button"
+                  className={`variant-chip${activeModel.variant ? "" : " selected"}`}
+                  aria-pressed={!activeModel.variant}
+                  onClick={() => onSelectVariant(activeModel, null)}
+                >
+                  Default
+                </button>
+                {variants.map((variant) => {
+                  const selected = activeModel.variant === variant;
+
+                  return (
+                    <button
+                      type="button"
+                      key={variant}
+                      className={`variant-chip${selected ? " selected" : ""}`}
+                      aria-pressed={selected}
+                      onClick={() => onSelectVariant(activeModel, variant)}
+                    >
+                      {formatVariantLabel(variant)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
         <p>
           The server still enforces provider access and model limits. Changing
@@ -112,6 +151,10 @@ export function ModelsView({
                   };
                   const selected = sameModel(activeModel, selection);
                   const labels = capabilityLabels(model);
+                  const nextSelection =
+                    selected && activeModel?.variant
+                      ? { ...selection, variant: activeModel.variant }
+                      : selection;
 
                   return (
                     <button
@@ -119,7 +162,7 @@ export function ModelsView({
                       key={model.id}
                       className={`model-card${selected ? " selected" : ""}`}
                       aria-pressed={selected}
-                      onClick={() => onSelectModel(selection)}
+                      onClick={() => onSelectModel(nextSelection)}
                     >
                       <span className="model-card-head">
                         <span className="model-name">{model.name}</span>
@@ -134,6 +177,9 @@ export function ModelsView({
                             ? `${Math.round(model.limit.context / 1000)}k context`
                             : "context unknown"}
                         </span>
+                        {model.variants.length > 0 ? (
+                          <span>{model.variants.length} modes</span>
+                        ) : null}
                         <span>{model.status || "active"}</span>
                       </span>
                       {labels.length > 0 ? (

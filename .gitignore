@@ -24,7 +24,20 @@ dist-ssr
 *.sw?
 
 # Generated Android runtime artifacts (scripts/prepare-android-runtime.py)
-android/app/src/main/jniLibs/
+android/app/src/main/jniLibs/arm64-v8a/*
+!android/app/src/main/jniLibs/arm64-v8a/libgit.so
+!android/app/src/main/jniLibs/arm64-v8a/libgit_*.so
+!android/app/src/main/jniLibs/arm64-v8a/libpcre2-8.so
+!android/app/src/main/jniLibs/arm64-v8a/libz.so
+!android/app/src/main/jniLibs/arm64-v8a/libiconv.so
+!android/app/src/main/jniLibs/arm64-v8a/libcrypto.so
+!android/app/src/main/jniLibs/arm64-v8a/libssl.so
+!android/app/src/main/jniLibs/arm64-v8a/libcurl.so
+!android/app/src/main/jniLibs/arm64-v8a/libnghttp2.so
+!android/app/src/main/jniLibs/arm64-v8a/libnghttp3.so
+!android/app/src/main/jniLibs/arm64-v8a/libngtcp2.so
+!android/app/src/main/jniLibs/arm64-v8a/libngtcp2_crypto_ossl.so
+!android/app/src/main/jniLibs/arm64-v8a/libssh2.so
 android/app/src/main/assets/runtime/cert.pem
 
 # Python bytecode

@@ -352,14 +352,14 @@ test("allows validated session create, prompt, command, and abort writes", async
     sessionUrl(),
     jsonRequest({
       title: "Mobile session",
-      model: { id: "model", providerID: "provider" },
+      model: { id: "model", providerID: "provider", variant: "high" },
     }),
   );
   assert.equal(createResponse.status, 200);
   assert.equal(createHttpClient.calls[0].method, "POST");
   assert.deepEqual(createHttpClient.calls[0].data, {
     title: "Mobile session",
-    model: { id: "model", providerID: "provider" },
+    model: { id: "model", providerID: "provider", variant: "high" },
   });
 
   const promptHttp = createHttp({ status: 204, data: "", headers: {} });
@@ -369,6 +369,7 @@ test("allows validated session create, prompt, command, and abort writes", async
       parts: [{ type: "text", text: "Inspect the project." }],
       model: { providerID: "provider", modelID: "model" },
       agent: "build",
+      variant: "max",
     }),
   );
   assert.equal(promptResponse.status, 204);
@@ -376,6 +377,7 @@ test("allows validated session create, prompt, command, and abort writes", async
     parts: [{ type: "text", text: "Inspect the project." }],
     model: { providerID: "provider", modelID: "model" },
     agent: "build",
+    variant: "max",
   });
 
   const imageUrl = "data:image/png;base64,iVBORw0KGgo=";
@@ -414,6 +416,7 @@ test("allows validated session create, prompt, command, and abort writes", async
       arguments: "make it smaller",
       model: "provider/model",
       agent: "build",
+      variant: "low",
     }),
   );
   assert.deepEqual(commandHttp.calls[0].data, {
@@ -421,6 +424,7 @@ test("allows validated session create, prompt, command, and abort writes", async
     arguments: "make it smaller",
     model: "provider/model",
     agent: "build",
+    variant: "low",
   });
 
   const shellHttp = createHttp({ status: 200, data: {}, headers: {} });
@@ -674,6 +678,10 @@ test("allows the phase 2 read endpoints", async () => {
       encodeURIComponent(PROJECT_DIRECTORY),
     "http://127.0.0.1:4097/config/providers?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4097/provider?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
+    "http://127.0.0.1:4097/provider/auth?directory=" +
+      encodeURIComponent(PROJECT_DIRECTORY),
     "http://127.0.0.1:4097/command?directory=" +
       encodeURIComponent(PROJECT_DIRECTORY),
     "http://127.0.0.1:4097/vcs/status?directory=" +
@@ -800,6 +808,39 @@ test("rejects unsafe file paths, searches, and patches", async () => {
   }
 });
 
+test("allows only the GitHub Copilot OAuth authorize request", async () => {
+  const url = new URL(
+    "/provider/github-copilot/oauth/authorize",
+    "http://127.0.0.1:4097",
+  );
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+
+  const http = createHttp({
+    status: 200,
+    data: {
+      url: "https://github.com/login/device",
+      method: "auto",
+      instructions: "Enter code: ABCD-1234",
+    },
+    headers: { "content-type": "application/json" },
+  });
+  const response = await createNativeFetch(http)(
+    url.href,
+    jsonRequest({
+      method: 0,
+      inputs: { deploymentType: "github.com" },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(http.calls.length, 1);
+  assert.equal(http.calls[0].method, "POST");
+  assert.deepEqual(http.calls[0].data, {
+    method: 0,
+    inputs: { deploymentType: "github.com" },
+  });
+});
+
 test("rejects invalid write bodies, sessions, and oversized requests", async () => {
   const cases = [
     {
@@ -813,6 +854,34 @@ test("rejects invalid write bodies, sessions, and oversized requests", async () 
     {
       url: sessionUrl(),
       body: { title: "ok", model: { id: "../model", providerID: "provider" } },
+    },
+    {
+      url: sessionUrl(),
+      body: {
+        title: "ok",
+        model: { id: "model", providerID: "provider", variant: "bad variant" },
+      },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [{ type: "text", text: "hi" }],
+        variant: "../high",
+      },
+    },
+    {
+      url: sessionItemUrl("command"),
+      body: { command: "init", arguments: "", variant: 7 },
+    },
+    {
+      url: "http://127.0.0.1:4097/provider/github-copilot/oauth/authorize?directory=" +
+        encodeURIComponent(PROJECT_DIRECTORY),
+      body: { method: 1, inputs: { deploymentType: "github.com" } },
+    },
+    {
+      url: "http://127.0.0.1:4097/provider/github-copilot/oauth/authorize?directory=" +
+        encodeURIComponent(PROJECT_DIRECTORY),
+      body: { method: 0, inputs: { deploymentType: "enterprise" } },
     },
     {
       url: sessionItemUrl("prompt_async"),
@@ -1015,6 +1084,16 @@ test("accepts the real SDK phase 2 request shapes", async () => {
         };
       } else if (path === "/config/providers") {
         data = { providers: [], default: {} };
+      } else if (path === "/provider") {
+        data = { all: [], default: {}, connected: ["github-copilot"] };
+      } else if (path === "/provider/auth") {
+        data = {};
+      } else if (path === "/provider/github-copilot/oauth/authorize") {
+        data = {
+          url: "https://github.com/login/device",
+          method: "auto",
+          instructions: "Enter code: ABCD-1234",
+        };
       } else if (path === "/session/status") {
         data = {};
       } else if (path === "/project") {
@@ -1044,12 +1123,17 @@ test("accepts the real SDK phase 2 request shapes", async () => {
   await client.session.create({
     directory: PROJECT_DIRECTORY,
     title: "SDK session",
-    model: { id: model.modelID, providerID: model.providerID },
+    model: {
+      id: model.modelID,
+      providerID: model.providerID,
+      variant: "high",
+    },
   });
   await client.session.promptAsync({
     sessionID,
     directory: PROJECT_DIRECTORY,
     model,
+    variant: "max",
     parts: [{ type: "text", text: "Hello" }],
   });
   await client.session.command({
@@ -1058,6 +1142,7 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     command: "init",
     arguments: "",
     model: "provider/model",
+    variant: "low",
   });
   await client.session.shell({
     sessionID,
@@ -1072,6 +1157,13 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     limit: 200,
   });
   await client.config.providers({ directory: PROJECT_DIRECTORY });
+  await client.provider.list({ directory: PROJECT_DIRECTORY });
+  await client.provider.oauth.authorize({
+    providerID: "github-copilot",
+    directory: PROJECT_DIRECTORY,
+    method: 0,
+    inputs: { deploymentType: "github.com" },
+  });
   await client.command.list({ directory: PROJECT_DIRECTORY });
   await client.vcs.status({ directory: PROJECT_DIRECTORY });
   await client.vcs.diff({
@@ -1104,6 +1196,8 @@ test("accepts the real SDK phase 2 request shapes", async () => {
       `POST /session/${sessionID}/abort`,
       `GET /session/${sessionID}/message`,
       "GET /config/providers",
+      "GET /provider",
+      "POST /provider/github-copilot/oauth/authorize",
       "GET /command",
       "GET /vcs/status",
       "GET /vcs/diff",

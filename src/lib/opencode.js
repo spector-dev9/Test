@@ -40,6 +40,7 @@ export { PROJECT_DIRECTORY };
 const SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]+$/;
 const PERMISSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const MODEL_VARIANT_PATTERN = /^[A-Za-z0-9._:-]{1,40}$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
@@ -291,7 +292,10 @@ function validateModel(model) {
     typeof model.providerID !== "string" ||
     typeof model.modelID !== "string" ||
     !MODEL_ID_PATTERN.test(model.providerID) ||
-    !MODEL_ID_PATTERN.test(model.modelID)
+    !MODEL_ID_PATTERN.test(model.modelID) ||
+    (model.variant != null &&
+      (typeof model.variant !== "string" ||
+        !MODEL_VARIANT_PATTERN.test(model.variant)))
   ) {
     throw invalidInput("The selected model is invalid.");
   }
@@ -299,6 +303,7 @@ function validateModel(model) {
   return {
     providerID: model.providerID,
     modelID: model.modelID,
+    ...(model.variant ? { variant: model.variant } : {}),
   };
 }
 
@@ -500,6 +505,9 @@ export function createOpenCodeApi(client = opencode) {
         body.model = {
           id: normalizedModel.modelID,
           providerID: normalizedModel.providerID,
+          ...(normalizedModel.variant
+            ? { variant: normalizedModel.variant }
+            : {}),
         };
       }
 
@@ -713,7 +721,14 @@ export function createOpenCodeApi(client = opencode) {
       };
 
       if (normalizedModel) {
-        body.model = normalizedModel;
+        body.model = {
+          providerID: normalizedModel.providerID,
+          modelID: normalizedModel.modelID,
+        };
+
+        if (normalizedModel.variant) {
+          body.variant = normalizedModel.variant;
+        }
       }
 
       if (normalizedAgent) {
@@ -746,6 +761,7 @@ export function createOpenCodeApi(client = opencode) {
       const id = validateSessionId(sessionID);
       const name = validateCommand(command);
       const normalizedArguments = validateCommandArguments(args);
+      const normalizedModel = validateModel(model);
       const normalizedAgent = validateAgent(agent);
 
       const body = {
@@ -753,8 +769,12 @@ export function createOpenCodeApi(client = opencode) {
         arguments: normalizedArguments,
       };
 
-      if (model?.providerID && model?.modelID) {
-        body.model = `${model.providerID}/${model.modelID}`;
+      if (normalizedModel) {
+        body.model = `${normalizedModel.providerID}/${normalizedModel.modelID}`;
+
+        if (normalizedModel.variant) {
+          body.variant = normalizedModel.variant;
+        }
       }
 
       if (normalizedAgent) {
@@ -1028,6 +1048,74 @@ export function createOpenCodeApi(client = opencode) {
       return data;
     },
 
+    async listConnectedProviders(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.provider.list(
+            { directory: scope },
+            { signal: requestSignal },
+          ),
+        "GitHub sign-in status could not be loaded.",
+        signal,
+      );
+
+      if (!data || typeof data !== "object" || !Array.isArray(data.connected)) {
+        throw unexpectedResponse();
+      }
+
+      return [
+        ...new Set(
+          data.connected.filter(
+            (id) => typeof id === "string" && AGENT_ID_PATTERN.test(id),
+          ),
+        ),
+      ];
+    },
+
+    async authorizeGitHubCopilot(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.provider.oauth.authorize(
+            {
+              providerID: "github-copilot",
+              directory: scope,
+              method: 0,
+              inputs: { deploymentType: "github.com" },
+            },
+            { signal: requestSignal },
+          ),
+        "GitHub sign-in could not be started.",
+        signal,
+      );
+
+      let url;
+
+      try {
+        url = new URL(data?.url);
+      } catch {
+        throw unexpectedResponse();
+      }
+
+      if (
+        url.protocol !== "https:" ||
+        url.href.length > 2000 ||
+        typeof data.instructions !== "string" ||
+        data.instructions.length > 500
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return {
+        url: url.href,
+        instructions: data.instructions,
+        method: data.method === "code" ? "code" : "auto",
+      };
+    },
+
     async listCommands(directory, signal) {
       const scope = validateProjectDirectory(directory);
       const data = await runRequest(
@@ -1154,6 +1242,12 @@ export const abortSession = (directory, sessionID, signal) =>
 
 export const listProviders = (directory, signal) =>
   opencodeApi.listProviders(directory, signal);
+
+export const listConnectedProviders = (directory, signal) =>
+  opencodeApi.listConnectedProviders(directory, signal);
+
+export const authorizeGitHubCopilot = (directory, signal) =>
+  opencodeApi.authorizeGitHubCopilot(directory, signal);
 
 export const listCommands = (directory, signal) =>
   opencodeApi.listCommands(directory, signal);

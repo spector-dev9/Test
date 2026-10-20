@@ -6,7 +6,9 @@ import {
   filterCommands,
   findModel,
   formatModelLabel,
+  formatVariantLabel,
   isConversationSettled,
+  isModelSelectionValid,
   normalizeConversation,
   normalizeProviders,
   offlineHelp,
@@ -29,6 +31,11 @@ const providersData = {
           name: "Big Pickle",
           capabilities: { toolcall: true, reasoning: true },
           limit: { context: 200000 },
+          variants: {
+            high: { reasoningEffort: "high" },
+            low: { reasoningEffort: "low" },
+            max: { reasoningEffort: "max" },
+          },
         },
         small: {
           id: "small",
@@ -175,6 +182,59 @@ test("normalizes providers and resolves preferred, session, and default models",
     normalized.providers[0].models.map((model) => model.id),
     ["big-pickle", "small"],
   );
+  assert.deepEqual(
+    normalized.providers[0].models[0].variants,
+    ["low", "high", "max"],
+  );
+
+  assert.deepEqual(
+    resolveEffectiveModel({
+      preferred: {
+        providerID: "opencode",
+        modelID: "big-pickle",
+        variant: "high",
+      },
+      session: null,
+      providersData,
+    }),
+    {
+      providerID: "opencode",
+      modelID: "big-pickle",
+      variant: "high",
+    },
+  );
+
+  assert.deepEqual(
+    resolveEffectiveModel({
+      preferred: {
+        providerID: "opencode",
+        modelID: "big-pickle",
+        variant: "missing",
+      },
+      session: null,
+      providersData,
+    }),
+    { providerID: "opencode", modelID: "big-pickle" },
+  );
+
+  assert.deepEqual(
+    resolveEffectiveModel({
+      preferred: null,
+      session: {
+        model: {
+          providerID: "opencode",
+          id: "big-pickle",
+          variant: "max",
+        },
+      },
+      providersData,
+    }),
+    {
+      providerID: "opencode",
+      modelID: "big-pickle",
+      variant: "max",
+    },
+  );
 
   assert.deepEqual(
     resolveEffectiveModel({
@@ -229,7 +289,32 @@ test("normalizes providers and resolves preferred, session, and default models",
     ),
     "Fast",
   );
+  assert.equal(
+    formatModelLabel(
+      { providerID: "opencode", modelID: "big-pickle", variant: "max" },
+      providersData,
+    ),
+    "Big Pickle · Max",
+  );
   assert.equal(formatModelLabel(null, providersData), "Default model");
+  assert.equal(formatVariantLabel("xhigh"), "XHigh");
+  assert.equal(formatVariantLabel("custom_mode"), "Custom Mode");
+  assert.equal(
+    isModelSelectionValid(providersData, {
+      providerID: "opencode",
+      modelID: "big-pickle",
+      variant: "low",
+    }),
+    true,
+  );
+  assert.equal(
+    isModelSelectionValid(providersData, {
+      providerID: "opencode",
+      modelID: "big-pickle",
+      variant: "missing",
+    }),
+    false,
+  );
 });
 
 test("filters and parses slash commands safely", () => {

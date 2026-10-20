@@ -17,6 +17,16 @@ const sessionTitleDate = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
+const VARIANT_ORDER = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 const ASSISTANT_ERROR_MESSAGES = {
   ProviderAuthError: "The model provider rejected authentication.",
   MessageOutputLengthError: "The model stopped because the output limit was reached.",
@@ -254,6 +264,47 @@ export function isConversationSettled(rows) {
   return false;
 }
 
+export function normalizeModelVariants(variants) {
+  if (!variants || typeof variants !== "object" || Array.isArray(variants)) {
+    return [];
+  }
+
+  return Object.keys(variants)
+    .filter((name) => typeof name === "string" && name.trim())
+    .sort((left, right) => {
+      const leftIndex = VARIANT_ORDER.indexOf(left);
+      const rightIndex = VARIANT_ORDER.indexOf(right);
+
+      if (leftIndex !== -1 && rightIndex !== -1) {
+        return leftIndex - rightIndex;
+      }
+
+      if (leftIndex !== -1) return -1;
+      if (rightIndex !== -1) return 1;
+      return left.localeCompare(right);
+    });
+}
+
+export function formatVariantLabel(variant) {
+  if (typeof variant !== "string" || !variant) return "Default";
+
+  const known = {
+    none: "None",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "XHigh",
+    max: "Max",
+  };
+
+  if (known[variant]) return known[variant];
+
+  return variant
+    .replace(/[-_]+/g, " ")
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
 export function normalizeProviders(data) {
   const providers = Array.isArray(data?.providers)
     ? data.providers
@@ -275,7 +326,11 @@ export function normalizeProviders(data) {
             )
             .sort((left, right) =>
               left.name.localeCompare(right.name),
-            ),
+            )
+            .map((model) => ({
+              ...model,
+              variants: normalizeModelVariants(model.variants),
+            })),
         }))
         .filter((provider) => provider.models.length > 0)
     : [];
@@ -289,14 +344,49 @@ export function normalizeProviders(data) {
   };
 }
 
-function modelExists(providers, model) {
-  if (!model) return false;
+function findProviderModel(providers, selection) {
+  if (!selection) return null;
 
-  return providers.some(
-    (provider) =>
-      provider.id === model.providerID &&
-      provider.models.some((item) => item.id === model.modelID),
+  const provider = providers.find(
+    (item) => item.id === selection.providerID,
   );
+  if (!provider) return null;
+
+  return (
+    provider.models.find((item) => item.id === selection.modelID) ?? null
+  );
+}
+
+function sanitizeModelSelection(providers, selection) {
+  if (!selection) return null;
+
+  const model = findProviderModel(providers, selection);
+  if (!model) return null;
+
+  const variant =
+    typeof selection.variant === "string" &&
+    model.variants.includes(selection.variant)
+      ? selection.variant
+      : null;
+
+  return {
+    providerID: selection.providerID,
+    modelID: selection.modelID,
+    ...(variant ? { variant } : {}),
+  };
+}
+
+export function isModelSelectionValid(providersData, selection) {
+  if (!selection) return false;
+
+  const model = findProviderModel(
+    normalizeProviders(providersData).providers,
+    selection,
+  );
+
+  if (!model) return false;
+  if (!selection.variant) return true;
+  return model.variants.includes(selection.variant);
 }
 
 export function resolveEffectiveModel({
@@ -310,13 +400,18 @@ export function resolveEffectiveModel({
       ? {
           providerID: session.model.providerID,
           modelID: session.model.id,
+          ...(typeof session.model.variant === "string" &&
+          session.model.variant
+            ? { variant: session.model.variant }
+            : {}),
         }
       : null;
   const defaultModel =
     Object.entries(normalized.default)
       .map(([providerID, modelID]) => ({ providerID, modelID }))
-      .find((model) => modelExists(normalized.providers, model)) ??
-    null;
+      .find((model) =>
+        findProviderModel(normalized.providers, model),
+      ) ?? null;
   const firstModel =
     normalized.providers[0]?.models[0] && {
       providerID: normalized.providers[0].id,
@@ -324,10 +419,14 @@ export function resolveEffectiveModel({
     };
 
   for (const candidate of [preferred, sessionModel, defaultModel]) {
-    if (
-      modelExists(normalized.providers, candidate) ||
-      (normalized.providers.length === 0 && candidate)
-    ) {
+    const sanitized = sanitizeModelSelection(
+      normalized.providers,
+      candidate,
+    );
+
+    if (sanitized) return sanitized;
+
+    if (normalized.providers.length === 0 && candidate) {
       return candidate;
     }
   }
@@ -353,7 +452,10 @@ export function findModel(providersData, selection) {
 export function formatModelLabel(selection, providersData) {
   if (!selection) return "Default model";
   const model = findModel(providersData, selection);
-  return model?.name ?? `${selection.providerID}/${selection.modelID}`;
+  const name = model?.name ?? `${selection.providerID}/${selection.modelID}`;
+  return selection.variant
+    ? `${name} · ${formatVariantLabel(selection.variant)}`
+    : name;
 }
 
 export function parseComposerSubmission(text, commands = []) {

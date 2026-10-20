@@ -30,6 +30,9 @@ const SESSION_ITEM_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/(message|prompt_async
 const SESSION_RESOURCE_PATH = /^\/session\/(ses_[A-Za-z0-9]+)$/;
 const PERMISSION_REPLY_PATH = /^\/permission\/([A-Za-z0-9_-]{1,200})\/reply$/;
 const PROVIDERS_PATH = "/config/providers";
+const PROVIDER_PATH = "/provider";
+const PROVIDER_AUTH_PATH = "/provider/auth";
+const PROVIDER_OAUTH_PATH = /^\/provider\/([a-z0-9-]+)\/oauth\/authorize$/;
 const COMMANDS_PATH = "/command";
 const VCS_STATUS_PATH = "/vcs/status";
 const VCS_DIFF_PATH = "/vcs/diff";
@@ -41,6 +44,7 @@ const PTY_PATH = "/pty";
 const PTY_RESOURCE_PATH = /^\/pty\/(pty_[A-Za-z0-9]+)$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const MODEL_REF_PATTERN = /^[A-Za-z0-9._:-]+\/[A-Za-z0-9._:-]+$/;
+const MODEL_VARIANT_PATTERN = /^[A-Za-z0-9._:-]{1,40}$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
@@ -199,6 +203,10 @@ function isModelId(value) {
   return typeof value === "string" && MODEL_ID_PATTERN.test(value);
 }
 
+function isModelVariant(value) {
+  return typeof value === "string" && MODEL_VARIANT_PATTERN.test(value);
+}
+
 function validateCreateBody(body) {
   exactKeys(body, ["title", "model"]);
 
@@ -211,18 +219,24 @@ function validateCreateBody(body) {
   }
 
   if (body.model !== undefined) {
-    exactKeys(body.model, ["id", "providerID"]);
+    exactKeys(body.model, ["id", "providerID", "variant"]);
     if (
       !isModelId(body.model.id) ||
       !isModelId(body.model.providerID)
     ) {
       throw invalidRequest("rejected an invalid model.");
     }
+    if (
+      body.model.variant !== undefined &&
+      !isModelVariant(body.model.variant)
+    ) {
+      throw invalidRequest("rejected an invalid model variant.");
+    }
   }
 }
 
 function validatePromptBody(body) {
-  exactKeys(body, ["parts", "model", "agent"]);
+  exactKeys(body, ["parts", "model", "agent", "variant"]);
 
   if (
     !Array.isArray(body.parts) ||
@@ -282,10 +296,14 @@ function validatePromptBody(body) {
   ) {
     throw invalidRequest("rejected an invalid agent.");
   }
+
+  if (body.variant !== undefined && !isModelVariant(body.variant)) {
+    throw invalidRequest("rejected an invalid model variant.");
+  }
 }
 
 function validateCommandBody(body) {
-  exactKeys(body, ["command", "arguments", "model", "agent"]);
+  exactKeys(body, ["command", "arguments", "model", "agent", "variant"]);
 
   if (
     typeof body.command !== "string" ||
@@ -315,6 +333,24 @@ function validateCommandBody(body) {
       !AGENT_ID_PATTERN.test(body.agent))
   ) {
     throw invalidRequest("rejected an invalid agent.");
+  }
+
+  if (body.variant !== undefined && !isModelVariant(body.variant)) {
+    throw invalidRequest("rejected an invalid model variant.");
+  }
+}
+
+function validateGitHubAuthorizeBody(body) {
+  exactKeys(body, ["method", "inputs"]);
+
+  if (body.method !== 0) {
+    throw invalidRequest("rejected an unsupported sign-in method.");
+  }
+
+  exactKeys(body.inputs, ["deploymentType", "enterpriseUrl"]);
+
+  if (body.inputs.deploymentType !== "github.com") {
+    throw invalidRequest("rejected an unsupported GitHub deployment.");
   }
 }
 
@@ -478,6 +514,11 @@ function validateReadRequest(url) {
     return;
   }
 
+  if (url.pathname === PROVIDER_PATH || url.pathname === PROVIDER_AUTH_PATH) {
+    requireProjectQuery(url);
+    return;
+  }
+
   if (url.pathname === COMMANDS_PATH) {
     requireProjectQuery(url);
     return;
@@ -579,6 +620,17 @@ async function validateMutationRequest(request, url, method) {
 
     const data = await requestBody(request);
     validateSessionUpdateBody(data);
+    return { data };
+  }
+
+  const oauthMatch = PROVIDER_OAUTH_PATH.exec(url.pathname);
+  if (oauthMatch) {
+    if (method !== "POST" || oauthMatch[1] !== "github-copilot") {
+      throw invalidRequest("rejected the request path.");
+    }
+
+    const data = await requestBody(request);
+    validateGitHubAuthorizeBody(data);
     return { data };
   }
 

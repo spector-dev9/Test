@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { BROWSER_REQUEST_TIMEOUT_MS } from "../lib/connection";
 import { localServerLogs } from "../lib/localServer";
@@ -8,13 +8,21 @@ import {
   OPENCODE_BASE_URL,
 } from "../lib/opencode";
 import {
+  PROJECT_DIRECTORY,
   projectLabel,
   projectPathLabel,
 } from "../lib/project";
 import {
+  isStorageSupported,
+  pickWorkspaceDirectory,
+  requestStorageAccess,
+  storageStatus,
+} from "../lib/storage";
+import {
   describeServer,
   offlineLabel,
 } from "../lib/workspace";
+import { GitHubCard } from "./GitHubCard";
 
 function DetailRow({ label, children }) {
   return (
@@ -56,8 +64,13 @@ export function SettingsView({
   project,
   projects,
   localServer,
+  workspaceDirectory,
+  onSelectWorkspace,
+  onProjectsChanged,
+  onProvidersChanged,
 }) {
   const native = Capacitor.isNativePlatform();
+  const storageSupported = isStorageSupported();
   const statusLabel = connected
     ? "Connected"
     : connection.tone === "offline"
@@ -72,6 +85,71 @@ export function SettingsView({
     );
   const [logs, setLogs] = useState("");
   const [logsBusy, setLogsBusy] = useState(false);
+  const [storage, setStorage] = useState(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageError, setStorageError] = useState("");
+
+  useEffect(() => {
+    if (!storageSupported) return undefined;
+    let cancelled = false;
+
+    storageStatus()
+      .then((value) => {
+        if (!cancelled) setStorage(value);
+      })
+      .catch((failure) => {
+        if (!cancelled) {
+          setStorageError(failure?.message || "Storage status is unavailable.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storageSupported]);
+
+  async function allowStorage() {
+    setStorageBusy(true);
+    setStorageError("");
+
+    try {
+      const value = await requestStorageAccess();
+      setStorage(value ?? (await storageStatus()));
+    } catch (failure) {
+      setStorageError(failure?.message || "Storage access could not be requested.");
+    } finally {
+      setStorageBusy(false);
+    }
+  }
+
+  async function chooseWorkspace() {
+    setStorageBusy(true);
+    setStorageError("");
+
+    try {
+      const selection = await pickWorkspaceDirectory();
+      if (!selection) return;
+
+      const result = onSelectWorkspace(selection.path);
+      if (!result?.ok) {
+        setStorageError(result?.error || "The folder could not be selected.");
+        return;
+      }
+
+      const value = await storageStatus().catch(() => null);
+      if (value) setStorage(value);
+
+      if (value && !value.allFiles) {
+        setStorageError(
+          "Folder selected. Grant all-files access so the OpenCode runtime and terminal can read it.",
+        );
+      }
+    } catch (failure) {
+      setStorageError(failure?.message || "The folder picker could not be opened.");
+    } finally {
+      setStorageBusy(false);
+    }
+  }
 
   async function showLogs() {
     if (logs) {
@@ -199,6 +277,102 @@ export function SettingsView({
         <div className="panel settings-card">
           <div className="panel-heading">
             <div>
+              <span className="panel-kicker">DEVICE STORAGE</span>
+              <h2>Workspace folders</h2>
+            </div>
+            <span
+              className={`status-chip ${storage?.allFiles ? "online" : "offline"}`}
+            >
+              <span
+                className={`dot ${storage?.allFiles ? "online" : "offline"}`}
+              />
+              {storage
+                ? storage.allFiles
+                  ? "Allowed"
+                  : "Not allowed"
+                : storageSupported
+                  ? "Checking"
+                  : "Unsupported"}
+            </span>
+          </div>
+
+          <dl className="detail-list">
+            <DetailRow label="All files access">
+              {storage
+                ? storage.allFiles
+                  ? `Allowed (Android API ${storage.sdk})`
+                  : `Not allowed (Android API ${storage.sdk})`
+                : storageSupported
+                  ? "Checking…"
+                  : "Unavailable in this build"}
+            </DetailRow>
+            <DetailRow label="Active workspace">
+              <code>{workspaceDirectory ?? PROJECT_DIRECTORY}</code>
+            </DetailRow>
+          </dl>
+
+          <div className="settings-runtime-actions">
+            {!storage?.allFiles ? (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={allowStorage}
+                disabled={storageBusy || !storageSupported}
+              >
+                Allow all files access
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={chooseWorkspace}
+              disabled={storageBusy || !storageSupported}
+            >
+              {storageBusy ? "Opening…" : "Choose folder"}
+            </button>
+            {workspaceDirectory ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => onSelectWorkspace(PROJECT_DIRECTORY)}
+                disabled={storageBusy}
+              >
+                Use app workspace
+              </button>
+            ) : null}
+          </div>
+
+          {storageError ? (
+            <p className="panel-note" role="alert">
+              {storageError}
+            </p>
+          ) : null}
+
+          <p className="panel-note">
+            All-files access lets the OpenCode runtime and terminal read folders
+            outside the app sandbox. The folder picker supports internal storage
+            and SD card paths; cloud providers without filesystem paths cannot
+            be used as a workspace.
+          </p>
+        </div>
+      ) : null}
+
+      {native && project ? (
+        <GitHubCard
+          key={project.worktree}
+          directory={project.worktree}
+          connected={connected}
+          workspaceDirectory={workspaceDirectory}
+          onSelectWorkspace={onSelectWorkspace}
+          onProjectsChanged={onProjectsChanged}
+          onProvidersChanged={onProvidersChanged}
+        />
+      ) : null}
+
+      {native ? (
+        <div className="panel settings-card">
+          <div className="panel-heading">
+            <div>
               <span className="panel-kicker">LOCAL RUNTIME</span>
               <h2>OpenCode on this device</h2>
             </div>
@@ -306,6 +480,7 @@ export function SettingsView({
           <li>Rename, archive, restore, and permanent session deletion</li>
           <li>Pending permission requests and explicit replies</li>
           <li>Configured models, project commands, and VCS data</li>
+          <li>GitHub Copilot sign-in and HTTPS repository clone and push</li>
         </ul>
         <p className="panel-note">
           The app does not read your OpenCode credentials, bypass provider

@@ -804,6 +804,7 @@ final class LocalServerManager {
         environment.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
         environment.put("LD_LIBRARY_PATH", runtime.getAbsolutePath());
         environment.remove("LD_PRELOAD");
+        GitRuntime.applyEnvironment(builder, context);
 
         Process started = builder.start();
 
