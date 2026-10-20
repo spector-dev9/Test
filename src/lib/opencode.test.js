@@ -365,6 +365,45 @@ test("scopes session lists and messages to the project", async () => {
   );
 });
 
+test("sends validated image attachments with prompts", async (t) => {
+  t.after(resetProjectDirectoryScope);
+
+  const calls = [];
+  const api = createOpenCodeApi({
+    session: {
+      promptAsync: async (parameters) => {
+        calls.push(parameters);
+        return fulfilled(null, 204);
+      },
+    },
+  });
+  const url = "data:image/png;base64,iVBORw0KGgo=";
+
+  await api.sendPromptAsync(PROJECT_DIRECTORY, "ses_test123", {
+    text: "Review this screenshot.",
+    attachments: [{ mime: "image/png", filename: "shot.png", url }],
+  });
+
+  assert.deepEqual(calls[0].parts, [
+    { type: "text", text: "Review this screenshot." },
+    {
+      type: "file",
+      mime: "image/png",
+      filename: "shot.png",
+      url,
+    },
+  ]);
+
+  await assert.rejects(
+    api.sendPromptAsync(PROJECT_DIRECTORY, "ses_test123", {
+      text: "Review this image.",
+      attachments: [{ mime: "image/svg+xml", filename: "x.svg", url }],
+    }),
+    /Attach up to 3 PNG/,
+  );
+  assert.equal(calls.length, 1);
+});
+
 test("sends prompts, commands, and abort requests with project scope", async () => {
   const calls = [];
   const api = createOpenCodeApi({

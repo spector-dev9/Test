@@ -37,6 +37,20 @@ export function MessageList({ messages, phase }) {
             <div className="message-text">{message.text}</div>
           ) : null}
 
+          {message.attachments?.length > 0 ? (
+            <div className="message-attachments">
+              {message.attachments.map((attachment, index) => (
+                <figure
+                  className="message-attachment"
+                  key={`${attachment.filename}-${index}`}
+                >
+                  <img src={attachment.url} alt={attachment.filename} />
+                  <figcaption>{attachment.filename}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : null}
+
           {message.tools.length > 0 ? (
             <div className="message-tools">
               {message.tools.map((tool, index) => (

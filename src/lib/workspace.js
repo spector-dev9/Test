@@ -1,3 +1,8 @@
+import {
+  MAX_PROMPT_ATTACHMENTS,
+  normalizeImageAttachment,
+} from "./attachments.js";
+
 const relativeTime = new Intl.RelativeTimeFormat(undefined, {
   numeric: "auto",
 });
@@ -177,6 +182,19 @@ export function normalizeConversation(rows) {
       .filter(Boolean)
       .join("\n\n");
 
+    const attachments = parts
+      .filter((part) => part?.type === "file")
+      .map((part) =>
+        normalizeImageAttachment({
+          type: part.type,
+          mime: part.mime,
+          filename: part.filename,
+          url: part.url,
+        }),
+      )
+      .filter(Boolean)
+      .slice(0, MAX_PROMPT_ATTACHMENTS);
+
     const tools = parts
       .filter((part) => part?.type === "tool")
       .map((part) => ({
@@ -196,7 +214,9 @@ export function normalizeConversation(rows) {
         ? assistantErrorMessage(info.error)
         : null;
 
-    if (!text && tools.length === 0 && !error) return [];
+    if (!text && tools.length === 0 && attachments.length === 0 && !error) {
+      return [];
+    }
 
     const created = Number(info.time?.created);
 
@@ -209,6 +229,7 @@ export function normalizeConversation(rows) {
         role: info.role,
         text,
         tools,
+        ...(attachments.length > 0 ? { attachments } : {}),
         error,
         created: Number.isFinite(created) ? created : null,
         completed: Boolean(info.time?.completed),

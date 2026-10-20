@@ -414,6 +414,7 @@ export function useSessionConversation({
             text: request.text,
             model: request.model,
             agent: request.agent,
+            attachments: request.attachments,
           });
         }
 

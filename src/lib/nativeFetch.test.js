@@ -378,6 +378,34 @@ test("allows validated session create, prompt, command, and abort writes", async
     agent: "build",
   });
 
+  const imageUrl = "data:image/png;base64,iVBORw0KGgo=";
+  const attachmentHttp = createHttp({ status: 204, data: "", headers: {} });
+  const attachmentResponse = await createNativeFetch(attachmentHttp)(
+    sessionItemUrl("prompt_async"),
+    jsonRequest({
+      parts: [
+        { type: "text", text: "Review the screenshot." },
+        {
+          type: "file",
+          mime: "image/png",
+          filename: "shot.png",
+          url: imageUrl,
+        },
+      ],
+      model: { providerID: "provider", modelID: "model" },
+    }),
+  );
+  assert.equal(attachmentResponse.status, 204);
+  assert.deepEqual(attachmentHttp.calls[0].data.parts, [
+    { type: "text", text: "Review the screenshot." },
+    {
+      type: "file",
+      mime: "image/png",
+      filename: "shot.png",
+      url: imageUrl,
+    },
+  ]);
+
   const commandHttp = createHttp({ status: 200, data: {}, headers: {} });
   await createNativeFetch(commandHttp)(
     sessionItemUrl("command"),
@@ -695,6 +723,81 @@ test("rejects invalid write bodies, sessions, and oversized requests", async () 
       body: {
         parts: [{ type: "text", text: "hi" }],
         tools: { bash: true },
+      },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [
+          { type: "text", text: "hi" },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "shot.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+            extra: true,
+          },
+        ],
+      },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [
+          { type: "text", text: "hi" },
+          {
+            type: "file",
+            mime: "image/svg+xml",
+            filename: "x.svg",
+            url: "data:image/svg+xml;base64,PHN2Zy8+",
+          },
+        ],
+      },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [
+          { type: "text", text: "hi" },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "shot.png",
+            url: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+          },
+        ],
+      },
+    },
+    {
+      url: sessionItemUrl("prompt_async"),
+      body: {
+        parts: [
+          { type: "text", text: "hi" },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "a.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+          },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "b.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+          },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "c.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+          },
+          {
+            type: "file",
+            mime: "image/png",
+            filename: "d.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
       },
     },
     {

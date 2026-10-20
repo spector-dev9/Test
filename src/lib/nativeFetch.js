@@ -10,6 +10,12 @@ import {
 } from "./files.js";
 import { isAllowedProjectDirectory } from "./projectScope.js";
 import { validateTerminalCommand } from "./terminal.js";
+import {
+  MAX_PROMPT_ATTACHMENTS,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  imageDataUrlBytes,
+  normalizeImageAttachment,
+} from "./attachments.js";
 
 const HEALTH_PATH = "/global/health";
 const PROJECT_PATH = "/project";
@@ -212,18 +218,45 @@ function validateCreateBody(body) {
 function validatePromptBody(body) {
   exactKeys(body, ["parts", "model", "agent"]);
 
-  if (!Array.isArray(body.parts) || body.parts.length !== 1) {
-    throw invalidRequest("requires exactly one text part.");
+  if (
+    !Array.isArray(body.parts) ||
+    body.parts.length < 1 ||
+    body.parts.length > MAX_PROMPT_ATTACHMENTS + 1
+  ) {
+    throw invalidRequest("requires a text part and up to three images.");
   }
 
-  exactKeys(body.parts[0], ["type", "text"]);
+  const [textPart, ...attachmentParts] = body.parts;
+
+  exactKeys(textPart, ["type", "text"]);
   if (
-    body.parts[0].type !== "text" ||
-    typeof body.parts[0].text !== "string" ||
-    !body.parts[0].text.trim() ||
-    body.parts[0].text.length > MAX_PROMPT_CHARS
+    textPart.type !== "text" ||
+    typeof textPart.text !== "string" ||
+    !textPart.text.trim() ||
+    textPart.text.length > MAX_PROMPT_CHARS
   ) {
     throw invalidRequest("requires a valid text part.");
+  }
+
+  let attachmentBytes = 0;
+
+  for (const part of attachmentParts) {
+    exactKeys(part, ["type", "mime", "filename", "url"]);
+
+    if (
+      part.type !== "file" ||
+      typeof part.filename !== "string" ||
+      !part.filename.trim() ||
+      part.filename.length > 120 ||
+      !normalizeImageAttachment(part)
+    ) {
+      throw invalidRequest("requires a valid image attachment.");
+    }
+
+    attachmentBytes += imageDataUrlBytes(part.url);
+    if (attachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      throw invalidRequest("rejected oversized image attachments.");
+    }
   }
 
   if (body.model !== undefined) {

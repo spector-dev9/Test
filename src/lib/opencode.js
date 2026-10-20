@@ -24,6 +24,10 @@ import {
   validateOpenCodeBaseUrl,
 } from "./connection.js";
 import { validateTerminalCommand } from "./terminal.js";
+import {
+  MAX_PROMPT_ATTACHMENTS,
+  normalizeImageAttachments,
+} from "./attachments.js";
 
 export { PROJECT_DIRECTORY };
 
@@ -665,7 +669,7 @@ export function createOpenCodeApi(client = opencode) {
     async sendPromptAsync(
       directory,
       sessionID,
-      { text, model, agent } = {},
+      { text, model, agent, attachments } = {},
       signal,
     ) {
       const scope = validateProjectDirectory(directory);
@@ -673,9 +677,25 @@ export function createOpenCodeApi(client = opencode) {
       const normalizedModel = validateModel(model);
       const normalizedAgent = validateAgent(agent);
       const prompt = validatePromptText(text);
+      const normalizedAttachments =
+        attachments == null ? [] : normalizeImageAttachments(attachments);
+
+      if (normalizedAttachments === null) {
+        throw invalidInput(
+          `Attach up to ${MAX_PROMPT_ATTACHMENTS} PNG, JPEG, WebP, or GIF images.`,
+        );
+      }
 
       const body = {
-        parts: [{ type: "text", text: prompt }],
+        parts: [
+          { type: "text", text: prompt },
+          ...normalizedAttachments.map((attachment) => ({
+            type: "file",
+            mime: attachment.mime,
+            filename: attachment.filename,
+            url: attachment.url,
+          })),
+        ],
       };
 
       if (normalizedModel) {
