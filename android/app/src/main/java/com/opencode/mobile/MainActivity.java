@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        registerPlugin(PtySocketPlugin.class);
         EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
 

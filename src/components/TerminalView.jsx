@@ -11,11 +11,8 @@ import {
   removeProjectTerminal,
   resizeProjectTerminal,
 } from "../lib/opencode";
-import {
-  parsePtyMessage,
-  ptyWebSocketUrl,
-  validateTerminalSize,
-} from "../lib/pty";
+import { ptyWebSocketUrl, validateTerminalSize } from "../lib/pty";
+import { openPtySocket } from "../lib/ptySocket";
 import { projectLabel } from "../lib/project";
 
 const RESIZE_DEBOUNCE_MS = 220;
@@ -119,8 +116,7 @@ export function TerminalView({ directory, connected, project, active }) {
     fitRef.current = fit;
 
     const dataSubscription = terminal.onData((data) => {
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+      socketRef.current?.send(data);
     });
     const resizeSubscription = terminal.onResize(({ cols, rows }) => {
       window.clearTimeout(resizeTimerRef.current);
@@ -185,33 +181,15 @@ export function TerminalView({ directory, connected, project, active }) {
       }
     }
 
-    function applyMessage(socket, payload) {
-      const handle = async () => {
-        let data = payload;
-
-        if (data instanceof Blob) {
-          try {
-            data = await data.arrayBuffer();
-          } catch {
-            return;
-          }
-        }
-
-        if (cancelled || socketRef.current !== socket) return;
-
-        const message = parsePtyMessage(data);
-        if (message.kind === "output") terminal?.write(message.text);
-      };
-
-      handle();
-    }
-
-    function connect(pty) {
-      let socket;
+    async function connect(pty) {
+      let url;
 
       try {
-        socket = new WebSocket(
-          ptyWebSocketUrl(DEFAULT_OPENCODE_URL, directory, pty.id, 0),
+        url = ptyWebSocketUrl(
+          DEFAULT_OPENCODE_URL,
+          directory,
+          pty.id,
+          0,
         );
       } catch {
         ptyRef.current = null;
@@ -221,52 +199,64 @@ export function TerminalView({ directory, connected, project, active }) {
         return;
       }
 
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-      let opened = false;
+      let connection;
+      let closed = false;
 
-      socket.onopen = () => {
-        if (cancelled || socketRef.current !== socket) return;
+      try {
+        connection = await openPtySocket(url, {
+          onMessage(text) {
+            if (cancelled || closed) return;
+            terminal?.write(text);
+          },
+          onError(failure) {
+            if (cancelled || closed) return;
+            setError(
+              failure?.message ||
+                "The terminal connection was interrupted.",
+            );
+          },
+          onClose() {
+            if (cancelled || closed) return;
 
-        opened = true;
-        setStatus("live");
-        setError(null);
+            closed = true;
+            if (socketRef.current === connection) socketRef.current = null;
+            ptyRef.current = null;
+            setStatus("closed");
+            setError(null);
+            terminal?.write(
+              "\r\n\x1b[90m[terminal session closed]\x1b[0m\r\n",
+            );
+          },
+        });
+      } catch {
+        if (cancelled) return;
 
-        window.setTimeout(() => {
-          const current = ptyRef.current;
-          const size = validateTerminalSize(
-            terminal?.cols ?? 0,
-            terminal?.rows ?? 0,
-          );
-
-          if (!current || !size || cancelled) return;
-          resizeProjectTerminal(directory, current.id, size).catch(() => {});
-        }, 0);
-      };
-
-      socket.onmessage = (event) => applyMessage(socket, event.data);
-
-      socket.onerror = () => {
-        if (cancelled || socketRef.current !== socket) return;
-        setError("The terminal connection was interrupted.");
-      };
-
-      socket.onclose = () => {
-        if (cancelled || socketRef.current !== socket) return;
-
-        socketRef.current = null;
         ptyRef.current = null;
+        removeProjectTerminal(directory, pty.id).catch(() => {});
+        setError("The terminal connection could not be established.");
+        setStatus("error");
+        return;
+      }
 
-        if (opened) {
-          setStatus("closed");
-          setError(null);
-          terminal?.write("\r\n\x1b[90m[terminal session closed]\x1b[0m\r\n");
-        } else {
-          setStatus("error");
-          setError("The terminal connection could not be established.");
-          removeProjectTerminal(directory, pty.id).catch(() => {});
-        }
-      };
+      if (cancelled) {
+        connection.close();
+        return;
+      }
+
+      socketRef.current = connection;
+      setStatus("live");
+      setError(null);
+
+      window.setTimeout(() => {
+        const current = ptyRef.current;
+        const size = validateTerminalSize(
+          terminal?.cols ?? 0,
+          terminal?.rows ?? 0,
+        );
+
+        if (!current || !size || cancelled) return;
+        resizeProjectTerminal(directory, current.id, size).catch(() => {});
+      }, 0);
     }
 
     async function start() {
