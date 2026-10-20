@@ -495,6 +495,86 @@ test("sends prompts, commands, and abort requests with project scope", async () 
   );
 });
 
+test("creates, resizes, and closes project terminals", async (t) => {
+  t.after(resetProjectDirectoryScope);
+
+  const calls = [];
+  const terminal = {
+    id: "pty_abc123XYZ",
+    title: "Shell",
+    command: "/bin/sh",
+    args: ["-l"],
+    cwd: PROJECT_DIRECTORY,
+    status: "running",
+    pid: 4321,
+  };
+  const api = createOpenCodeApi({
+    pty: {
+      create: async (parameters) => {
+        calls.push(["create", parameters]);
+        return fulfilled(terminal);
+      },
+      update: async (parameters) => {
+        calls.push(["update", parameters]);
+        return fulfilled(terminal);
+      },
+      remove: async (parameters) => {
+        calls.push(["remove", parameters]);
+        return fulfilled(true);
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await api.createProjectTerminal(PROJECT_DIRECTORY, {
+      title: "  Shell  ",
+    }),
+    terminal,
+  );
+  await api.resizeProjectTerminal(PROJECT_DIRECTORY, terminal.id, {
+    cols: 90,
+    rows: 30,
+  });
+  assert.equal(
+    await api.removeProjectTerminal(PROJECT_DIRECTORY, terminal.id),
+    true,
+  );
+
+  assert.deepEqual(calls, [
+    [
+      "create",
+      { directory: PROJECT_DIRECTORY, title: "Shell" },
+    ],
+    [
+      "update",
+      {
+        ptyID: terminal.id,
+        directory: PROJECT_DIRECTORY,
+        size: { cols: 90, rows: 30 },
+      },
+    ],
+    [
+      "remove",
+      { ptyID: terminal.id, directory: PROJECT_DIRECTORY },
+    ],
+  ]);
+
+  await assert.rejects(
+    api.resizeProjectTerminal(PROJECT_DIRECTORY, "pty_bad-id", {
+      cols: 90,
+      rows: 30,
+    }),
+    /terminal identifier/,
+  );
+  await assert.rejects(
+    api.resizeProjectTerminal(PROJECT_DIRECTORY, terminal.id, {
+      cols: 2,
+      rows: 30,
+    }),
+    /terminal size/,
+  );
+});
+
 test("loads providers, commands, and VCS data with validated options", async () => {
   const calls = [];
   const api = createOpenCodeApi({

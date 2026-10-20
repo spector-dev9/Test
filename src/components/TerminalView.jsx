@@ -1,158 +1,338 @@
 import { useEffect, useRef, useState } from "react";
-import { connectionFailure } from "../lib/connection";
-import { projectLabel } from "../lib/project";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import {
-  createProjectSession,
-  listProjectSessions,
-  runProjectShell,
+  DEFAULT_OPENCODE_URL,
+  connectionFailure,
+} from "../lib/connection";
+import {
+  createProjectTerminal,
+  removeProjectTerminal,
+  resizeProjectTerminal,
 } from "../lib/opencode";
 import {
-  TERMINAL_SESSION_TITLE,
-  appendTerminalLine,
-  extractTerminalOutput,
-  validateTerminalCommand,
-} from "../lib/terminal";
+  parsePtyMessage,
+  ptyWebSocketUrl,
+  validateTerminalSize,
+} from "../lib/pty";
+import { projectLabel } from "../lib/project";
 
-function nextLine(line) {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    ...line,
-  };
+const RESIZE_DEBOUNCE_MS = 220;
+
+const TERMINAL_THEME = {
+  background: "#0b0b0e",
+  foreground: "#d7d7e0",
+  cursor: "#a897ff",
+  cursorAccent: "#0b0b0e",
+  selectionBackground: "#3c3564",
+  black: "#17171c",
+  red: "#e38b8b",
+  green: "#8fce9b",
+  yellow: "#ddc177",
+  blue: "#8fa8e8",
+  magenta: "#c59ae8",
+  cyan: "#82cfd4",
+  white: "#d7d7e0",
+  brightBlack: "#6f6f7c",
+  brightRed: "#f0a5a5",
+  brightGreen: "#a8e2b2",
+  brightYellow: "#ecd38d",
+  brightBlue: "#a6bcf2",
+  brightMagenta: "#d7b1f0",
+  brightCyan: "#9ce1e5",
+  brightWhite: "#f4f4f8",
+};
+
+const STATUS_LABELS = {
+  idle: "Manual",
+  connecting: "Starting shell…",
+  live: "Live",
+  closed: "Session ended",
+  error: "Unavailable",
+  offline: "Server offline",
+};
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] ?? STATUS_LABELS.idle;
 }
 
-export function TerminalView({
-  directory,
-  connected,
-  project,
-  active,
-  agent,
-}) {
-  const [lines, setLines] = useState([]);
-  const [command, setCommand] = useState("");
-  const [busy, setBusy] = useState(false);
+export function TerminalView({ directory, connected, project, active }) {
+  const [enabled, setEnabled] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState("connecting");
   const [error, setError] = useState(null);
-  const [sessionID, setSessionID] = useState(null);
-  const outputRef = useRef(null);
-  const mountedRef = useRef(true);
-  const historyRef = useRef([]);
-  const historyPositionRef = useRef(0);
+  const containerRef = useRef(null);
+  const terminalRef = useRef(null);
+  const fitRef = useRef(null);
+  const socketRef = useRef(null);
+  const ptyRef = useRef(null);
+  const resizeTimerRef = useRef(null);
+  const activeRef = useRef(active);
+  const directoryRef = useRef(directory);
 
   useEffect(() => {
-    mountedRef.current = true;
+    activeRef.current = active;
+    directoryRef.current = directory;
+  }, [active, directory]);
+
+  useEffect(() => {
+    if (!active) terminalRef.current?.blur();
+    if (!active) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        fitRef.current?.fit();
+      } catch {
+        // The terminal may not be measurable while the tab is changing.
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [active]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const terminal = new Terminal({
+      allowTransparency: false,
+      convertEol: false,
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      scrollback: 5000,
+      smoothScrollDuration: 0,
+      theme: TERMINAL_THEME,
+    });
+    const fit = new FitAddon();
+
+    terminal.loadAddon(fit);
+    terminal.open(container);
+    terminalRef.current = terminal;
+    fitRef.current = fit;
+
+    const dataSubscription = terminal.onData((data) => {
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+    });
+    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = window.setTimeout(() => {
+        const pty = ptyRef.current;
+        const size = validateTerminalSize(cols, rows);
+
+        if (!pty || !size) return;
+
+        resizeProjectTerminal(directoryRef.current, pty.id, size).catch(
+          () => {},
+        );
+      }, RESIZE_DEBOUNCE_MS);
+    });
+    const fitTerminal = () => {
+      if (!activeRef.current) return;
+
+      try {
+        fit.fit();
+      } catch {
+        // Keep the last usable size when layout is temporarily unavailable.
+      }
+    };
+    const resizeObserver = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+
+      if ((box?.width ?? 0) > 0 && (box?.height ?? 0) > 0) {
+        setEnabled(true);
+      }
+
+      fitTerminal();
+    });
+
+    resizeObserver.observe(container);
+    window.visualViewport?.addEventListener("resize", fitTerminal);
+
     return () => {
-      mountedRef.current = false;
+      window.clearTimeout(resizeTimerRef.current);
+      resizeObserver.disconnect();
+      window.visualViewport?.removeEventListener("resize", fitTerminal);
+      dataSubscription.dispose();
+      resizeSubscription.dispose();
+      terminal.dispose();
+      terminalRef.current = null;
+      fitRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!active) return;
-    const output = outputRef.current;
-    if (output) output.scrollTop = output.scrollHeight;
-  }, [active, lines, busy]);
+    if (!enabled || !connected) return undefined;
 
-  function addLine(line) {
-    setLines((previous) => appendTerminalLine(previous, nextLine(line)));
-  }
+    const terminal = terminalRef.current;
+    let cancelled = false;
 
-  async function ensureSession() {
-    if (sessionID) return sessionID;
+    function teardown(socket, pty, remove) {
+      if (socketRef.current === socket) socketRef.current = null;
+      if (socket) socket.close();
 
-    const sessions = await listProjectSessions(directory);
-    const existing = sessions
-      .filter(
-        (session) =>
-          session?.title === TERMINAL_SESSION_TITLE &&
-          !session.time?.archived,
-      )
-      .sort(
-        (left, right) =>
-          (right.time?.updated ?? 0) - (left.time?.updated ?? 0),
-      )[0];
-
-    if (existing?.id) {
-      setSessionID(existing.id);
-      return existing.id;
-    }
-
-    const created = await createProjectSession(directory, {
-      title: TERMINAL_SESSION_TITLE,
-    });
-    setSessionID(created.id);
-    return created.id;
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-
-    const normalized = validateTerminalCommand(command);
-    if (!normalized || busy || !connected) return;
-
-    setCommand("");
-    setError(null);
-    setBusy(true);
-
-    historyRef.current = [...historyRef.current, normalized].slice(-100);
-    historyPositionRef.current = historyRef.current.length;
-
-    addLine({ kind: "command", text: normalized });
-
-    try {
-      const id = await ensureSession();
-      const result = await runProjectShell(directory, id, {
-        command: normalized,
-        agent: agent || "build",
-      });
-      if (!mountedRef.current) return;
-
-      const { output, failed } = extractTerminalOutput(result);
-      if (output) {
-        addLine({ kind: failed ? "error" : "output", text: output });
-      } else if (!failed) {
-        addLine({ kind: "system", text: "(no output)" });
+      if (ptyRef.current === pty) ptyRef.current = null;
+      if (pty && remove) {
+        removeProjectTerminal(directory, pty.id).catch(() => {});
       }
-    } catch (failure) {
-      if (!mountedRef.current) return;
-
-      setError(
-        connectionFailure(
-          failure,
-          "The command could not be run.",
-        ).message,
-      );
-    } finally {
-      if (mountedRef.current) setBusy(false);
     }
+
+    function applyMessage(socket, payload) {
+      const handle = async () => {
+        let data = payload;
+
+        if (data instanceof Blob) {
+          try {
+            data = await data.arrayBuffer();
+          } catch {
+            return;
+          }
+        }
+
+        if (cancelled || socketRef.current !== socket) return;
+
+        const message = parsePtyMessage(data);
+        if (message.kind === "output") terminal?.write(message.text);
+      };
+
+      handle();
+    }
+
+    function connect(pty) {
+      let socket;
+
+      try {
+        socket = new WebSocket(
+          ptyWebSocketUrl(DEFAULT_OPENCODE_URL, directory, pty.id, 0),
+        );
+      } catch {
+        ptyRef.current = null;
+        removeProjectTerminal(directory, pty.id).catch(() => {});
+        setError("The terminal connection could not be opened.");
+        setStatus("error");
+        return;
+      }
+
+      socket.binaryType = "arraybuffer";
+      socketRef.current = socket;
+      let opened = false;
+
+      socket.onopen = () => {
+        if (cancelled || socketRef.current !== socket) return;
+
+        opened = true;
+        setStatus("live");
+        setError(null);
+
+        window.setTimeout(() => {
+          const current = ptyRef.current;
+          const size = validateTerminalSize(
+            terminal?.cols ?? 0,
+            terminal?.rows ?? 0,
+          );
+
+          if (!current || !size || cancelled) return;
+          resizeProjectTerminal(directory, current.id, size).catch(() => {});
+        }, 0);
+      };
+
+      socket.onmessage = (event) => applyMessage(socket, event.data);
+
+      socket.onerror = () => {
+        if (cancelled || socketRef.current !== socket) return;
+        setError("The terminal connection was interrupted.");
+      };
+
+      socket.onclose = () => {
+        if (cancelled || socketRef.current !== socket) return;
+
+        socketRef.current = null;
+        ptyRef.current = null;
+
+        if (opened) {
+          setStatus("closed");
+          setError(null);
+          terminal?.write("\r\n\x1b[90m[terminal session closed]\x1b[0m\r\n");
+        } else {
+          setStatus("error");
+          setError("The terminal connection could not be established.");
+          removeProjectTerminal(directory, pty.id).catch(() => {});
+        }
+      };
+    }
+
+    async function start() {
+      await Promise.resolve();
+      if (cancelled) return;
+
+      setStatus("connecting");
+      setError(null);
+      terminal?.reset();
+
+      try {
+        const pty = await createProjectTerminal(directory, {
+          title: project
+            ? `${projectLabel(project)} terminal`
+            : "OpenCode Terminal",
+        });
+
+        if (cancelled) {
+          removeProjectTerminal(directory, pty.id).catch(() => {});
+          return;
+        }
+
+        ptyRef.current = pty;
+        connect(pty);
+      } catch (failure) {
+        if (cancelled) return;
+
+        setStatus("error");
+        setError(
+          connectionFailure(
+            failure,
+            "The terminal could not be started.",
+          ).message,
+        );
+      }
+    }
+
+    start();
+
+    return () => {
+      cancelled = true;
+      teardown(socketRef.current, ptyRef.current, true);
+    };
+  }, [attempt, connected, directory, enabled, project]);
+
+  function reconnect() {
+    setError(null);
+    setStatus("connecting");
+    setAttempt((value) => value + 1);
   }
 
-  function handleHistory(event) {
-    if (event.key === "ArrowUp") {
-      if (historyRef.current.length === 0) return;
-      event.preventDefault();
-      historyPositionRef.current = Math.max(
-        0,
-        historyPositionRef.current - 1,
-      );
-      setCommand(historyRef.current[historyPositionRef.current] ?? "");
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      if (historyPositionRef.current >= historyRef.current.length) return;
-      event.preventDefault();
-      historyPositionRef.current += 1;
-      setCommand(
-        historyPositionRef.current === historyRef.current.length
-          ? ""
-          : historyRef.current[historyPositionRef.current] ?? "",
-      );
-    }
+  function clearTerminal() {
+    terminalRef.current?.clear();
+    terminalRef.current?.scrollToBottom();
   }
+
+  const visibleStatus = !enabled
+    ? "idle"
+    : !connected
+      ? "offline"
+      : status;
+  const controlsDisabled =
+    !connected || visibleStatus === "connecting";
 
   return (
     <section className="terminal-view" aria-labelledby="terminal-heading">
       <header className="terminal-toolbar">
         <div className="terminal-heading">
-          <span className="panel-kicker">PROJECT SHELL</span>
+          <span className="panel-kicker">PROJECT PTY</span>
           <h1 id="terminal-heading">
             Terminal
             <span className="terminal-project">
@@ -160,100 +340,52 @@ export function TerminalView({
             </span>
           </h1>
         </div>
-        <button
-          type="button"
-          className="secondary-button compact-button"
-          onClick={() => {
-            setLines([]);
-            setError(null);
-          }}
-          disabled={lines.length === 0 || busy}
-        >
-          Clear
-        </button>
+        <div className="terminal-actions">
+          <span
+            className={`terminal-status terminal-status-${visibleStatus}`}
+            title={statusLabel(visibleStatus)}
+          >
+            <span className="terminal-status-dot" aria-hidden="true" />
+            <span className="terminal-status-label">
+              {statusLabel(visibleStatus)}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={reconnect}
+            disabled={controlsDisabled}
+          >
+            Reconnect
+          </button>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={clearTerminal}
+          >
+            Clear
+          </button>
+        </div>
       </header>
 
       <div className="terminal-panel">
         <div
-          ref={outputRef}
-          className="terminal-screen"
-          role="log"
-          aria-live="polite"
-          aria-label="Terminal output"
-        >
-          {lines.length === 0 ? (
-            <div className="terminal-empty">
-              <p>Run a command in this project.</p>
-              <small>
-                Commands run through the local OpenCode server, not a full
-                interactive PTY.
-              </small>
-            </div>
-          ) : (
-            lines.map((line) => (
-              <div
-                key={line.id}
-                className={`terminal-line terminal-line-${line.kind}`}
-              >
-                {line.kind === "command" ? (
-                  <span className="terminal-command-prompt" aria-hidden="true">
-                    $
-                  </span>
-                ) : null}
-                <pre>{line.text}</pre>
-              </div>
-            ))
-          )}
-          {busy ? (
-            <div className="terminal-line terminal-line-pending">
-              <span className="terminal-spinner" aria-hidden="true" />
-              <span>Running…</span>
-            </div>
-          ) : null}
-        </div>
+          ref={containerRef}
+          className="terminal-xterm"
+          aria-label="Interactive terminal"
+        />
 
-        {error ? (
+        {error && connected ? (
           <div className="inline-error terminal-error" role="alert">
             <span>{error}</span>
           </div>
         ) : null}
-
-        <form className="terminal-input-row" onSubmit={submit}>
-          <span className="terminal-command-prompt" aria-hidden="true">
-            $
-          </span>
-          <input
-            type="text"
-            value={command}
-            onChange={(event) => {
-              setCommand(event.target.value);
-              setError(null);
-            }}
-            onKeyDown={handleHistory}
-            placeholder={
-              connected ? "Enter a shell command" : "Connect to run commands"
-            }
-            aria-label="Shell command"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck="false"
-            enterKeyHint="send"
-            disabled={!connected}
-          />
-          <button
-            type="submit"
-            className="primary-button compact-button"
-            disabled={!connected || busy || !command.trim()}
-          >
-            {busy ? "Running…" : "Run"}
-          </button>
-        </form>
       </div>
 
       <p className="terminal-note">
-        Runs in {project ? projectLabel(project) : "this project"} through the
-        OpenCode server. Commands are saved in a dedicated terminal session
-        {sessionID ? ` (${sessionID.slice(0, 12)}…)` : ""}.
+        Tap the terminal and type to use the interactive shell in{" "}
+        {project ? projectLabel(project) : "this project"}. Closing this tab
+        keeps the session running.
       </p>
     </section>
   );

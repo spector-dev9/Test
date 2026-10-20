@@ -14,5 +14,8 @@
   },
   "cordova": {
     "accessOrigins": []
+  },
+  "android": {
+    "allowMixedContent": true
   }
 }

@@ -117,7 +117,7 @@ test("accepts the real SDK health and session request shapes", async () => {
 });
 
 test("rejects unsupported methods before contacting Capacitor", async () => {
-  for (const method of ["PUT", "OPTIONS", "HEAD"]) {
+  for (const method of ["OPTIONS", "HEAD"]) {
     const http = createHttp();
     const nativeFetch = createNativeFetch(http);
 
@@ -440,6 +440,106 @@ test("allows validated session create, prompt, command, and abort writes", async
   );
   assert.equal(abortHttp.calls[0].method, "POST");
   assert.equal(abortHttp.calls[0].data, undefined);
+});
+
+test("allows validated PTY create, resize, and close writes", async () => {
+  const base = new URL("/pty", "http://127.0.0.1:4096");
+  base.searchParams.set("directory", PROJECT_DIRECTORY);
+  const terminal = {
+    id: "pty_abc123XYZ",
+    title: "Shell",
+    command: "/bin/sh",
+    args: ["-l"],
+    cwd: PROJECT_DIRECTORY,
+    status: "running",
+    pid: 4321,
+  };
+  const http = createHttp({
+    status: 200,
+    data: terminal,
+    headers: { "content-type": "application/json" },
+  });
+  const nativeFetch = createNativeFetch(http);
+
+  const created = await nativeFetch(
+    base.href,
+    jsonRequest({ title: "Shell" }),
+  );
+  assert.equal(created.status, 200);
+  assert.deepEqual(http.calls[0].data, { title: "Shell" });
+  assert.equal(http.calls[0].method, "POST");
+
+  const item = new URL(
+    `/pty/${terminal.id}`,
+    "http://127.0.0.1:4096",
+  );
+  item.searchParams.set("directory", PROJECT_DIRECTORY);
+  const resized = await nativeFetch(
+    item.href,
+    jsonRequest({ size: { cols: 90, rows: 30 } }, "PUT"),
+  );
+  assert.equal(resized.status, 200);
+  assert.deepEqual(http.calls[1].data, {
+    size: { cols: 90, rows: 30 },
+  });
+  assert.equal(http.calls[1].method, "PUT");
+
+  const removed = await nativeFetch(item.href, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  assert.equal(http.calls[2].method, "DELETE");
+  assert.equal(http.calls[2].data, undefined);
+});
+
+test("rejects malformed PTY writes", async () => {
+  const base = new URL("/pty", "http://127.0.0.1:4096");
+  base.searchParams.set("directory", PROJECT_DIRECTORY);
+  const item = new URL(
+    "/pty/pty_abc123XYZ",
+    "http://127.0.0.1:4096",
+  );
+  item.searchParams.set("directory", PROJECT_DIRECTORY);
+  const cases = [
+    {
+      url: base.href,
+      body: { title: "Shell", command: "/bin/sh" },
+    },
+    {
+      url: base.href,
+      body: { title: "" },
+    },
+    {
+      url: item.href,
+      body: { size: { cols: 2, rows: 30 } },
+    },
+    {
+      url: item.href,
+      body: { size: { cols: 90, rows: 300 } },
+    },
+    {
+      url: item.href,
+      body: { size: { cols: 90, rows: 30 }, extra: true },
+    },
+    {
+      url: new URL(
+        "/pty/pty_bad-id?directory=" +
+          encodeURIComponent(PROJECT_DIRECTORY),
+        "http://127.0.0.1:4096",
+      ).href,
+      body: { size: { cols: 90, rows: 30 } },
+    },
+  ];
+
+  for (const item of cases) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(
+        item.url,
+        jsonRequest(item.body, "PUT"),
+      ),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
+  }
 });
 
 test("allows project discovery without a project query", async () => {

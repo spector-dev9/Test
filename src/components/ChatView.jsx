@@ -628,26 +628,7 @@ export function ChatView({
             aria-describedby="composer-status"
           />
           <div className="composer-footer">
-            <span id="composer-status">
-              {!connected
-                ? "Server offline · reconnect to send"
-                : !session
-                  ? "Create a session to start"
-                  : permissionPending
-                    ? "Permission required · review the prompt above"
-                    : phase === "sending"
-                      ? "Sending prompt…"
-                      : phase === "working"
-                        ? "Agent working · you can stop it"
-                        : phase === "stopping"
-                          ? "Stopping the agent…"
-                          : attachments.length > 0
-                            ? `${attachments.length} image${attachments.length === 1 ? "" : "s"} attached · Ctrl/⌘ + Enter to send`
-                            : draft.length > MAX_COMPOSER_CHARS - 2000
-                              ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
-                              : "Ctrl/⌘ + Enter to send · type / for commands"}
-            </span>
-            <div className="composer-actions">
+            <div className="composer-meta">
               <button
                 type="button"
                 className="composer-attach"
@@ -675,6 +656,27 @@ export function ChatView({
                 hidden
                 onChange={handleFilesChange}
               />
+              <span id="composer-status">
+                {!connected
+                  ? "Server offline · reconnect to send"
+                  : !session
+                    ? "Create a session to start"
+                    : permissionPending
+                      ? "Permission required · review the prompt above"
+                      : phase === "sending"
+                        ? "Sending prompt…"
+                        : phase === "working"
+                          ? "Agent working · you can stop it"
+                          : phase === "stopping"
+                            ? "Stopping the agent…"
+                            : attachments.length > 0
+                              ? `${attachments.length} image${attachments.length === 1 ? "" : "s"} attached · Ctrl/⌘ + Enter to send`
+                              : draft.length > MAX_COMPOSER_CHARS - 2000
+                                ? `${draft.length.toLocaleString()} / ${MAX_COMPOSER_CHARS.toLocaleString()}`
+                                : "Ctrl/⌘ + Enter to send · type / for commands"}
+              </span>
+            </div>
+            <div className="composer-actions">
               {phase === "working" ? (
                 <button
                   type="button"

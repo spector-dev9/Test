@@ -25,6 +25,12 @@ import {
 } from "./connection.js";
 import { validateTerminalCommand } from "./terminal.js";
 import {
+  isPtyId,
+  normalizePtyInfo,
+  normalizePtyTitle,
+  validateTerminalSize,
+} from "./pty.js";
+import {
   MAX_PROMPT_ATTACHMENTS,
   normalizeImageAttachments,
 } from "./attachments.js";
@@ -177,6 +183,14 @@ function validateSessionTitle(title) {
   }
 
   return trimmed;
+}
+
+function validatePtyId(ptyID) {
+  if (!isPtyId(ptyID)) {
+    throw invalidInput("The terminal identifier is invalid.");
+  }
+
+  return ptyID;
 }
 
 function validatePermissionId(requestID) {
@@ -809,6 +823,77 @@ export function createOpenCodeApi(client = opencode) {
       return data;
     },
 
+    async createProjectTerminal(directory, { title } = {}, signal) {
+      const scope = validateProjectDirectory(directory);
+      const body = {
+        directory: scope,
+        title: normalizePtyTitle(title),
+      };
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.pty.create(body, { signal: requestSignal }),
+        "The terminal could not be started.",
+        signal,
+      );
+      const terminal = normalizePtyInfo(data, scope);
+
+      if (!terminal) throw unexpectedResponse();
+
+      return terminal;
+    },
+
+    async resizeProjectTerminal(directory, ptyID, size, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validatePtyId(ptyID);
+      const normalizedSize = validateTerminalSize(size?.cols, size?.rows);
+
+      if (!normalizedSize) {
+        throw invalidInput("The terminal size is invalid.");
+      }
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.pty.update(
+            {
+              ptyID: id,
+              directory: scope,
+              size: normalizedSize,
+            },
+            { signal: requestSignal },
+          ),
+        "The terminal could not be resized.",
+        signal,
+      );
+      const terminal = normalizePtyInfo(data, scope);
+
+      if (!terminal) throw unexpectedResponse();
+
+      return terminal;
+    },
+
+    async removeProjectTerminal(directory, ptyID, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validatePtyId(ptyID);
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.pty.remove(
+            { ptyID: id, directory: scope },
+            { signal: requestSignal },
+          ),
+        "The terminal could not be closed.",
+        signal,
+      );
+
+      if (data !== true) throw unexpectedResponse();
+
+      return true;
+    },
+
     async abortSession(directory, sessionID, signal) {
       const scope = validateProjectDirectory(directory);
       const id = validateSessionId(sessionID);
@@ -1054,6 +1139,15 @@ export const sendCommand = (directory, sessionID, options, signal) =>
 
 export const runProjectShell = (directory, sessionID, options, signal) =>
   opencodeApi.runProjectShell(directory, sessionID, options, signal);
+
+export const createProjectTerminal = (directory, options, signal) =>
+  opencodeApi.createProjectTerminal(directory, options, signal);
+
+export const resizeProjectTerminal = (directory, ptyID, size, signal) =>
+  opencodeApi.resizeProjectTerminal(directory, ptyID, size, signal);
+
+export const removeProjectTerminal = (directory, ptyID, signal) =>
+  opencodeApi.removeProjectTerminal(directory, ptyID, signal);
 
 export const abortSession = (directory, sessionID, signal) =>
   opencodeApi.abortSession(directory, sessionID, signal);

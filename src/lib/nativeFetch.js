@@ -11,6 +11,10 @@ import {
 import { isAllowedProjectDirectory } from "./projectScope.js";
 import { validateTerminalCommand } from "./terminal.js";
 import {
+  MAX_PTY_TITLE_CHARS,
+  validateTerminalSize,
+} from "./pty.js";
+import {
   MAX_PROMPT_ATTACHMENTS,
   MAX_TOTAL_ATTACHMENT_BYTES,
   imageDataUrlBytes,
@@ -33,6 +37,8 @@ const VCS_APPLY_PATH = "/vcs/apply";
 const FILE_PATH = "/file";
 const FILE_CONTENT_PATH = "/file/content";
 const FILE_FIND_PATH = "/find/file";
+const PTY_PATH = "/pty";
+const PTY_RESOURCE_PATH = /^\/pty\/(pty_[A-Za-z0-9]+)$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const MODEL_REF_PATTERN = /^[A-Za-z0-9._:-]+\/[A-Za-z0-9._:-]+$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -338,6 +344,28 @@ function validateShellBody(body) {
   }
 }
 
+function validatePtyCreateBody(body) {
+  exactKeys(body, ["title"]);
+
+  if (
+    body.title !== undefined &&
+    (typeof body.title !== "string" ||
+      !body.title.trim() ||
+      body.title.length > MAX_PTY_TITLE_CHARS)
+  ) {
+    throw invalidRequest("requires a valid terminal title.");
+  }
+}
+
+function validatePtyUpdateBody(body) {
+  exactKeys(body, ["size"]);
+  exactKeys(body.size, ["cols", "rows"]);
+
+  if (!validateTerminalSize(body.size.cols, body.size.rows)) {
+    throw invalidRequest("requires a valid terminal size.");
+  }
+}
+
 function validateSessionUpdateBody(body) {
   exactKeys(body, ["title", "time"]);
 
@@ -533,7 +561,10 @@ async function validateMutationRequest(request, url, method) {
   requireProjectQuery(url);
 
   if (method === "DELETE") {
-    if (SESSION_RESOURCE_PATH.test(url.pathname)) {
+    if (
+      SESSION_RESOURCE_PATH.test(url.pathname) ||
+      PTY_RESOURCE_PATH.test(url.pathname)
+    ) {
       return {};
     }
 
@@ -565,6 +596,31 @@ async function validateMutationRequest(request, url, method) {
   if (permissionMatch) {
     const data = await requestBody(request);
     validatePermissionReplyBody(data);
+    return { data };
+  }
+
+  if (url.pathname === PTY_PATH) {
+    if (method !== "POST") {
+      throw invalidRequest("rejected the request method.");
+    }
+
+    const data = await requestBody(request);
+    validatePtyCreateBody(data);
+    return { data };
+  }
+
+  const ptyMatch = PTY_RESOURCE_PATH.exec(url.pathname);
+  if (ptyMatch) {
+    if (method === "DELETE") {
+      return {};
+    }
+
+    if (method !== "PUT") {
+      throw invalidRequest("rejected the request method.");
+    }
+
+    const data = await requestBody(request);
+    validatePtyUpdateBody(data);
     return { data };
   }
 
@@ -638,7 +694,12 @@ async function validateRequest(request) {
     return;
   }
 
-  if (method === "POST" || method === "PATCH" || method === "DELETE") {
+  if (
+    method === "POST" ||
+    method === "PUT" ||
+    method === "PATCH" ||
+    method === "DELETE"
+  ) {
     return validateMutationRequest(request, url, method);
   }
 
