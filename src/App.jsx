@@ -461,18 +461,6 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="topbar-left">
-          <button
-            ref={menuButtonRef}
-            type="button"
-            className="icon-button menu-button"
-            aria-label={menuOpen ? "Close workspace menu" : "Open workspace menu"}
-            aria-expanded={menuOpen}
-            aria-haspopup="dialog"
-            aria-controls="mobile-workspace"
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            {menuOpen ? "×" : "☰"}
-          </button>
           <div className="brand">
             <span className="brand-icon">✳</span>
             <span>OpenCode</span>
@@ -520,6 +508,9 @@ export default function App() {
             activeView={activeView}
             onNavigate={handleNavigate}
             onAction={handleWorkspaceAction}
+            onMenu={() => setMenuOpen((open) => !open)}
+            menuButtonRef={menuButtonRef}
+            menuOpen={menuOpen}
             connected={connected}
             creatingSession={creatingSession}
           />

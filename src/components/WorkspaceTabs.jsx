@@ -11,29 +11,32 @@ export function WorkspaceTabs({
   activeView,
   onNavigate,
   onAction,
+  onMenu,
+  menuButtonRef,
+  menuOpen,
   connected,
   creatingSession,
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
 
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (!actionsOpen) return undefined;
 
     function handlePointer(event) {
       if (
         !menuRef.current?.contains(event.target) &&
         !buttonRef.current?.contains(event.target)
       ) {
-        setMenuOpen(false);
+        setActionsOpen(false);
       }
     }
 
     function handleKey(event) {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setMenuOpen(false);
+      setActionsOpen(false);
       buttonRef.current?.focus();
     }
 
@@ -44,15 +47,32 @@ export function WorkspaceTabs({
       document.removeEventListener("pointerdown", handlePointer);
       document.removeEventListener("keydown", handleKey);
     };
-  }, [menuOpen]);
+  }, [actionsOpen]);
 
   function runAction(action) {
-    setMenuOpen(false);
+    setActionsOpen(false);
     onAction(action);
   }
 
   return (
     <div className="workspace-tabs-bar">
+      <button
+        ref={menuButtonRef}
+        type="button"
+        className="workspace-menu-button"
+        onClick={onMenu}
+        aria-label={menuOpen ? "Close workspace menu" : "Open workspace menu"}
+        aria-expanded={menuOpen}
+        aria-haspopup="dialog"
+        aria-controls="mobile-workspace"
+      >
+        <span className="menu-icon" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      </button>
+
       <div className="workspace-tabs" role="tablist" aria-label="Workspace tabs">
         {TABS.map((tab) => (
           <button
@@ -73,15 +93,15 @@ export function WorkspaceTabs({
         <button
           ref={buttonRef}
           type="button"
-          className={`icon-button workspace-add-button${menuOpen ? " active" : ""}`}
+          className={`icon-button workspace-add-button${actionsOpen ? " active" : ""}`}
           aria-label="Create or open"
           aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((value) => !value)}
+          aria-expanded={actionsOpen}
+          onClick={() => setActionsOpen((value) => !value)}
         >
           ＋
         </button>
-        {menuOpen ? (
+        {actionsOpen ? (
           <div
             ref={menuRef}
             className="workspace-action-menu"

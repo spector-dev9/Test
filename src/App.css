@@ -184,9 +184,6 @@ textarea:focus-visible {
   opacity: 0.45;
 }
 
-.menu-button {
-  display: none;
-}
 
 .refresh-icon {
   display: block;
@@ -954,8 +951,44 @@ h2 {
   background: rgba(16, 16, 19, 0.82);
 }
 
+.workspace-menu-button {
+  display: inline-grid;
+  flex: 0 0 34px;
+  place-items: center;
+  align-self: stretch;
+  width: 34px;
+  margin-left: -12px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--border);
+  color: var(--text);
+  background: transparent;
+}
+
+.workspace-menu-button:hover {
+  background: #ffffff08;
+}
+
+.menu-icon {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 16px;
+  height: 16px;
+}
+
+.menu-icon span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
 .workspace-tabs {
   display: flex;
+  flex: 1;
   align-self: stretch;
   min-width: 0;
   overflow-x: auto;
@@ -3132,12 +3165,6 @@ h2 {
   }
 }
 
-@media (min-width: 651px) {
-  .drawer-backdrop {
-    display: none;
-  }
-}
-
 @media (max-width: 650px) {
   .topbar {
     height: 56px;
@@ -3153,9 +3180,6 @@ h2 {
     gap: 7px;
   }
 
-  .menu-button {
-    display: inline-grid;
-  }
 
   .drawer-backdrop {
     top: 56px;
@@ -3383,6 +3407,12 @@ h2 {
   .workspace-tabs-bar {
     flex-basis: 42px;
     padding: 0 7px;
+  }
+
+  .workspace-menu-button {
+    flex-basis: 32px;
+    width: 32px;
+    margin-left: -7px;
   }
 
   .workspace-tab {
