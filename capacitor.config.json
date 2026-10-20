@@ -1,0 +1,12 @@
+{
+  "appId": "com.opencode.mobile",
+  "appName": "OpenCode Mobile",
+  "webDir": "dist",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https"
+  },
+  "cordova": {
+    "accessOrigins": []
+  }
+}
