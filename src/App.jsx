@@ -153,6 +153,7 @@ export default function App() {
     onRefreshSessions: overview.refresh,
   });
   const refreshConversation = conversation.refresh;
+  const submitConversation = conversation.submit;
 
   const refresh = useCallback(() => {
     refreshProjects();
@@ -302,16 +303,6 @@ export default function App() {
     }
   }, [menuOpen]);
 
-  useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 651px)");
-    const handleChange = (event) => {
-      if (event.matches) setMenuOpen(false);
-    };
-
-    desktop.addEventListener("change", handleChange);
-    return () => desktop.removeEventListener("change", handleChange);
-  }, []);
-
   const handleNewSession = useCallback(async () => {
     if (!connected || creatingSession || sessionActionsDisabled) {
       return null;
@@ -337,6 +328,20 @@ export default function App() {
     effectiveModel,
     sessionActionsDisabled,
   ]);
+
+  const submitMessage = useCallback(
+    async (request) => {
+      if (!request) return false;
+
+      const targetSessionId =
+        activeSessionId ?? (await handleNewSession())?.id;
+
+      if (!targetSessionId) return false;
+
+      return submitConversation(request, targetSessionId);
+    },
+    [activeSessionId, handleNewSession, submitConversation],
+  );
 
   const handleSelectSession = useCallback(
     (sessionId) => {
@@ -471,7 +476,14 @@ export default function App() {
             aria-controls="mobile-workspace"
             onClick={() => setMenuOpen((open) => !open)}
           >
-            {menuOpen ? "×" : "☰"}
+            <span
+              className={`menu-icon${menuOpen ? " is-open" : ""}`}
+              aria-hidden="true"
+            >
+              <span />
+              <span />
+              <span />
+            </span>
           </button>
           <div className="brand">
             <span className="brand-icon">✳</span>
@@ -542,7 +554,7 @@ export default function App() {
                 permissionError={conversation.permissionError}
                 replyingPermissionId={conversation.replyingPermissionId}
                 onPermissionReply={conversation.respondToPermission}
-                onSend={conversation.submit}
+                onSend={submitMessage}
                 onRetrySend={conversation.retryLast}
                 onStop={conversation.stop}
                 onRefreshMessages={conversation.refresh}

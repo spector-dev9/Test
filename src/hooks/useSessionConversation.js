@@ -384,10 +384,10 @@ export function useSessionConversation({
   }, [directory, enabled, sessionId, setPhaseSafe]);
 
   const submit = useCallback(
-    async (request) => {
+    async (request, targetSessionId = sessionId) => {
       if (
         !directory ||
-        !sessionId ||
+        !targetSessionId ||
         !enabled ||
         phaseRef.current !== "idle" ||
         !request
@@ -403,14 +403,14 @@ export function useSessionConversation({
 
       try {
         if (request.kind === "command") {
-          await sendCommand(directory, sessionId, {
+          await sendCommand(directory, targetSessionId, {
             command: request.command,
             arguments: request.arguments,
             model: request.model,
             agent: request.agent,
           });
         } else {
-          await sendPromptAsync(directory, sessionId, {
+          await sendPromptAsync(directory, targetSessionId, {
             text: request.text,
             model: request.model,
             agent: request.agent,
