@@ -170,7 +170,7 @@ public class LinuxEnvironment extends Plugin {
         return new File(getContext().getFilesDir(), PROOT_RELATIVE);
     }
 
-    private File prootTmpDir() {
+    private File prootTmpDir() throws IOException {
         File directory = new File(getContext().getCacheDir(), "proot");
         mkdirs(directory);
         return directory;
