@@ -46,7 +46,6 @@ public class LinuxEnvironment extends Plugin {
         "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
 
-    private final Context context;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final OkHttpClient client = new OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -144,7 +143,7 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private File rootfsPath() {
-        return new File(context.getFilesDir(), ROOTFS_RELATIVE);
+        return new File(getContext().getFilesDir(), ROOTFS_RELATIVE);
     }
 
     private File ensureRootfs() throws Exception {
@@ -153,10 +152,10 @@ public class LinuxEnvironment extends Plugin {
             return rootfs;
         }
 
-        File archive = new File(context.getCacheDir(), "alpine-minirootfs.tar.gz");
+        File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.tar.gz");
         download(ALPINE_ROOTFS_URL, archive);
 
-        File staging = new File(context.getFilesDir(), "linux-staging");
+        File staging = new File(getContext().getFilesDir(), "linux-staging");
         deleteRecursively(staging);
         staging.mkdirs();
 
