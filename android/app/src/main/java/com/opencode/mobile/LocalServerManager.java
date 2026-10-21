@@ -311,7 +311,7 @@ final class LocalServerManager {
                 StringBuilder errors = new StringBuilder();
                 Thread errorPump = captureAsync(process.getErrorStream(), errors, "opencode-export-stderr");
 
-                try (OutputStream output = getContext().getContentResolver()
+                try (OutputStream output = context.getContentResolver()
                     .openOutputStream(destination, "wt")) {
                     if (output == null) {
                         throw new IOException("The selected export file could not be opened.");
@@ -350,7 +350,7 @@ final class LocalServerManager {
                 CliContext cli = prepareCli();
                 File staged = new File(cli.temp, "session-import-" + System.currentTimeMillis() + ".json");
                 try {
-                    try (InputStream input = getContext().getContentResolver().openInputStream(source)) {
+                    try (InputStream input = context.getContentResolver().openInputStream(source)) {
                         if (input == null) {
                             throw new IOException("The selected session file could not be read.");
                         }
