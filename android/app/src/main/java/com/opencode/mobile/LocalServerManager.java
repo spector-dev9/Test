@@ -39,6 +39,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
@@ -130,13 +132,22 @@ final class LocalServerManager {
         .connectTimeout(1, TimeUnit.SECONDS)
         .readTimeout(1, TimeUnit.SECONDS)
         .build();
+    private static final int HEALTH_CHECK_INTERVAL_SECONDS = 30;
+    private static final int MAX_HEALTH_FAILURES = 2;
+
     private final Object lock = new Object();
     private final ArrayDeque<String> logs = new ArrayDeque<>();
     private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private final List<Callback> waiters = new ArrayList<>();
+    private final OkHttpClient watchdogClient = new OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build();
 
     private Process process;
     private Thread pumpThread;
+    private ScheduledExecutorService watchdog;
+    private ScheduledFuture<?> watchdogTask;
     private boolean starting;
     private String state = STATE_IDLE;
     private int progress;
@@ -144,6 +155,7 @@ final class LocalServerManager {
     private String lastError;
     private String version;
     private boolean installed;
+    private volatile int healthFailures;
 
     private LocalServerManager(Context context) {
         this.context = context.getApplicationContext();
@@ -180,6 +192,7 @@ final class LocalServerManager {
                 done = new ArrayList<>(waiters);
                 waiters.clear();
                 immediate = snapshotLocked();
+                scheduleWatchdog();
             } else if (!starting) {
                 starting = true;
                 state = STATE_PREPARING;
@@ -215,6 +228,7 @@ final class LocalServerManager {
                 lastError = null;
             }
             stopKeepAliveService();
+            cancelWatchdog();
             emit(null);
 
             if (callback != null) {
@@ -242,6 +256,7 @@ final class LocalServerManager {
                 message = "Restarting the local OpenCode server";
                 lastError = null;
             }
+            cancelWatchdog();
             emit(null);
             runStartWithCallback(callback);
         });
@@ -267,6 +282,7 @@ final class LocalServerManager {
                 stopProcessLocked();
             }
             stopKeepAliveService();
+            cancelWatchdog();
             deleteRecursively(runtimeDir());
             deleteRecursively(stagingDir());
             File archive = archiveFile();
@@ -347,6 +363,8 @@ final class LocalServerManager {
                 message = "OpenCode is ready";
                 lastError = null;
                 installed = true;
+                healthFailures = 0;
+                scheduleWatchdog();
             }
             finish(null);
         } catch (Throwable error) {
@@ -362,6 +380,7 @@ final class LocalServerManager {
                 lastError = detail;
             }
             stopKeepAliveService();
+            cancelWatchdog();
             finish(detail);
         }
     }
@@ -968,6 +987,57 @@ final class LocalServerManager {
             context.stopService(new Intent(context, LocalServerService.class));
         } catch (Throwable error) {
             Log.w(TAG, "Could not stop the keep-alive service", error);
+        }
+    }
+
+    void ensureAlive() {
+        synchronized (lock) {
+            if (starting || !STATE_RUNNING.equals(state)) return;
+        }
+
+        try {
+            Request request = new Request.Builder().url(URL + "/global/health").build();
+            try (Response response = watchdogClient.newCall(request).execute()) {
+                if (response.isSuccessful()) {
+                    ResponseBody body = response.body();
+                    String text = body == null ? "" : body.string();
+                    if (text.replaceAll("\\s+", "").contains("\"healthy\":true")) {
+                        healthFailures = 0;
+                        return;
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // The server may be temporarily busy or unreachable.
+        }
+
+        healthFailures += 1;
+        if (healthFailures < MAX_HEALTH_FAILURES) return;
+
+        healthFailures = 0;
+        Log.w(TAG, "Server health check failed; restarting the local server");
+        restart(null);
+    }
+
+    private void scheduleWatchdog() {
+        cancelWatchdog();
+        watchdog = Executors.newSingleThreadScheduledExecutor();
+        watchdogTask = watchdog.scheduleAtFixedRate(
+            this::ensureAlive,
+            HEALTH_CHECK_INTERVAL_SECONDS,
+            HEALTH_CHECK_INTERVAL_SECONDS,
+            TimeUnit.SECONDS
+        );
+    }
+
+    private void cancelWatchdog() {
+        if (watchdogTask != null) {
+            watchdogTask.cancel(false);
+            watchdogTask = null;
+        }
+        if (watchdog != null) {
+            watchdog.shutdownNow();
+            watchdog = null;
         }
     }
 
