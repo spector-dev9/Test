@@ -9,8 +9,11 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -28,6 +31,7 @@ public class GitHubPlugin extends Plugin {
 
     private static final int MAX_OUTPUT_CHARS = 20000;
     private static final int MAX_CHANGES = 200;
+    private static final int MAX_AUTH_CHARS = 65536;
     private static final long PROCESS_TIMEOUT_MINUTES = 10;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -36,6 +40,15 @@ public class GitHubPlugin extends Plugin {
     protected void handleOnDestroy() {
         executor.shutdownNow();
         super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void copilotStatus(PluginCall call) {
+        executor.execute(() -> {
+            JSObject result = new JSObject();
+            result.put("connected", copilotConnected());
+            finish(call, result);
+        });
     }
 
     @PluginMethod
@@ -319,6 +332,58 @@ public class GitHubPlugin extends Plugin {
         result.put("changes", lines.size());
         result.put("files", files);
         return result;
+    }
+
+    private boolean copilotConnected() {
+        File authFile = new File(
+            getContext().getFilesDir(),
+            "home/.local/share/opencode/auth.json"
+        );
+
+        if (!authFile.isFile()) return false;
+
+        StringBuilder content = new StringBuilder();
+
+        try (
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(
+                    new FileInputStream(authFile),
+                    StandardCharsets.UTF_8
+                )
+            )
+        ) {
+            char[] buffer = new char[4096];
+            int read;
+
+            while (
+                content.length() < MAX_AUTH_CHARS &&
+                (read = reader.read(buffer)) != -1
+            ) {
+                content.append(
+                    buffer,
+                    0,
+                    Math.min(read, MAX_AUTH_CHARS - content.length())
+                );
+            }
+        } catch (IOException failure) {
+            return false;
+        }
+
+        try {
+            JSONObject auth = new JSONObject(content.toString());
+            JSONObject copilot = auth.optJSONObject("github-copilot");
+
+            if (copilot == null || !"oauth".equals(copilot.optString("type"))) {
+                return false;
+            }
+
+            return (
+                !copilot.optString("access", "").trim().isEmpty() ||
+                !copilot.optString("refresh", "").trim().isEmpty()
+            );
+        } catch (Exception failure) {
+            return false;
+        }
     }
 
     private ProcessResult runGit(File directory, List<String> arguments)

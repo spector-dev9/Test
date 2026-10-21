@@ -330,8 +330,8 @@ final class LocalServerManager {
             }
             emit(null);
 
-            startServer(meta, files, home, workspace, temp);
             startKeepAliveService();
+            startServer(meta, files, home, workspace, temp);
 
             synchronized (lock) {
                 progress = 97;
@@ -941,6 +941,13 @@ final class LocalServerManager {
             Thread.currentThread().interrupt();
             current.destroyForcibly();
         }
+    }
+
+    void ensureKeepAliveService() {
+        synchronized (lock) {
+            if (!starting && !STATE_RUNNING.equals(state)) return;
+        }
+        startKeepAliveService();
     }
 
     private void startKeepAliveService() {

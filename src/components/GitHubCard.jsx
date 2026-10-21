@@ -3,18 +3,17 @@ import { CONNECTION_ERROR_KINDS } from "../lib/connection";
 import {
   authorizeGitHubCopilot,
   completeGitHubCopilot,
-  listConnectedProviders,
 } from "../lib/opencode";
 import {
   cloneRepository,
   commitAndPush,
+  copilotStatus,
   isGitHubToolsSupported,
   joinWorkspacePath,
   parseRepositoryUrl,
   repositoryStatus,
 } from "../lib/github";
 
-const COPILOT_ID = "github-copilot";
 const POLL_INTERVAL_MS = 2500;
 const MAX_POLL_ATTEMPTS = 360;
 const RETRYABLE_AUTH_KINDS = new Set([
@@ -94,7 +93,7 @@ export function GitHubCard({
   }, [onProvidersChanged, stopAuthAttempt]);
 
   const refreshProviders = useCallback(async () => {
-    if (!native || !connected || !directory) {
+    if (!native) {
       setProviders({ status: "idle", connected: false, error: "" });
       return;
     }
@@ -106,14 +105,16 @@ export function GitHubCard({
     }));
 
     try {
-      const list = await listConnectedProviders(directory);
+      const status = await copilotStatus();
+      const signedIn = Boolean(status?.connected);
+
       setProviders({
         status: "ready",
-        connected: list.includes(COPILOT_ID),
+        connected: signedIn,
         error: "",
       });
 
-      if (list.includes(COPILOT_ID)) {
+      if (signedIn) {
         stopAuthAttempt();
         setAuth(null);
         setAuthBusy(false);
@@ -125,7 +126,7 @@ export function GitHubCard({
         error: failure?.message || "GitHub sign-in status is unavailable.",
       }));
     }
-  }, [connected, directory, native, stopAuthAttempt]);
+  }, [native, stopAuthAttempt]);
 
   const refreshRepo = useCallback(async () => {
     if (!native || !directory) return;
@@ -153,42 +154,14 @@ export function GitHubCard({
   }, [stopAuthAttempt]);
 
   useEffect(() => {
-    if (!native || !connected || !directory) return undefined;
-    let cancelled = false;
-
-    listConnectedProviders(directory)
-      .then((list) => {
-        if (cancelled) return;
-        setProviders({
-          status: "ready",
-          connected: list.includes(COPILOT_ID),
-          error: "",
-        });
-
-        if (list.includes(COPILOT_ID)) {
-          stopAuthAttempt();
-          setAuth(null);
-          setAuthBusy(false);
-        }
-      })
-      .catch((failure) => {
-        if (cancelled) return;
-        setProviders((current) => ({
-          status: "error",
-          connected: current.connected,
-          error: failure?.message || "GitHub sign-in status is unavailable.",
-        }));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [connected, directory, native, stopAuthAttempt]);
-
-  useEffect(() => {
-    if (!native || !connected || !directory || authBusy || auth) {
+    if (!native) {
+      setProviders({ status: "idle", connected: false, error: "" });
       return undefined;
     }
+
+    if (authBusy || auth) return undefined;
+
+    refreshProviders();
 
     function handleVisibility() {
       if (document.visibilityState === "visible") {
@@ -203,7 +176,7 @@ export function GitHubCard({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [auth, authBusy, connected, directory, native, refreshProviders]);
+  }, [auth, authBusy, native, refreshProviders]);
 
   useEffect(() => {
     if (!native || !directory) return undefined;
@@ -263,7 +236,7 @@ export function GitHubCard({
         }
 
         try {
-          const list = await listConnectedProviders(directory);
+          const status = await copilotStatus();
 
           if (
             !mountedRef.current ||
@@ -272,7 +245,7 @@ export function GitHubCard({
             return;
           }
 
-          if (list.includes(COPILOT_ID)) {
+          if (status?.connected) {
             finishCopilot();
           }
         } catch {

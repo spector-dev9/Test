@@ -1,5 +1,8 @@
 package com.opencode.mobile;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 
@@ -12,6 +15,7 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 4097;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -22,6 +26,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GitHubPlugin.class);
         EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
+        requestNotificationPermission();
+        LocalServerManager.get(this).ensureStarted(null, null);
 
         View root = getWindow().getDecorView();
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, windowInsets) -> {
@@ -51,5 +57,39 @@ public class MainActivity extends BridgeActivity {
                 .build();
         });
         ViewCompat.requestApplyInsets(root);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        LocalServerManager.get(this).ensureKeepAliveService();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+        int requestCode,
+        String[] permissions,
+        int[] grantResults
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            LocalServerManager.get(this).ensureKeepAliveService();
+        }
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return;
+        }
+
+        requestPermissions(
+            new String[] { Manifest.permission.POST_NOTIFICATIONS },
+            NOTIFICATION_PERMISSION_REQUEST
+        );
     }
 }

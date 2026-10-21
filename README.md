@@ -1,8 +1,8 @@
 # OpenCode Mobile
 
-A Capacitor Android client for a local OpenCode server. The app connects to the
-exact loopback origin `http://127.0.0.1:4096` and scopes every request to the
-currently selected OpenCode project.
+A Capacitor Android client for a local OpenCode server. The Android app starts
+its own server on the exact loopback origin `http://127.0.0.1:4097` and scopes
+every request to the currently selected OpenCode project.
 
 ## Features
 
@@ -30,8 +30,20 @@ currently selected OpenCode project.
 ## Requirements
 
 - Node.js 22 or newer.
-- An OpenCode server running on `http://127.0.0.1:4096`.
+- The Android app starts its OpenCode server automatically on
+  `http://127.0.0.1:4097`.
+- For browser development, an OpenCode server reachable at the configured URL
+  (the default is `http://127.0.0.1:4097`).
 - For Android builds: JDK 21 and the Android SDK.
+
+The app's `4097` server uses app-private HOME and workspace directories. A
+separately started `opencode web` server, such as the Termux server on `4096`,
+uses a different HOME and does not share sessions with the app. In a browser,
+`4097` shows app workspace sessions after selecting that project; `4096` shows
+the sessions belonging to the separately started server.
+
+The app runs a foreground service and requests notification permission so the
+local server keeps running when the app is in the background.
 
 ## Development
 
@@ -74,7 +86,7 @@ runs.
 
 ## Connection policy
 
-The app connects to `http://127.0.0.1:4096` by default. Set
+The app connects to `http://127.0.0.1:4097` by default. Set
 `VITE_OPENCODE_URL` at build time only when the resulting origin, path, and query
 shapes still match the native transport allowlist. Native Android builds reject
 any other origin. Requests are restricted to health and project discovery,

@@ -5,27 +5,44 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 
 public class LocalServerService extends Service {
+    private static final String TAG = "LocalServerService";
     private static final String CHANNEL_ID = "opencode-local-server";
     private static final int NOTIFICATION_ID = 4097;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
+        createChannel(this);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
-            startForeground(NOTIFICATION_ID, buildNotification());
+            Notification notification = buildNotification();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                );
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
         } catch (Throwable error) {
+            Log.e(TAG, "Could not start the foreground service", error);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -38,10 +55,10 @@ public class LocalServerService extends Service {
         return null;
     }
 
-    private void createChannel() {
+    static void createChannel(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
 
-        NotificationManager manager = getSystemService(NotificationManager.class);
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return;
 
         NotificationChannel channel = new NotificationChannel(

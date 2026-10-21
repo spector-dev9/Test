@@ -69,6 +69,13 @@ export function joinWorkspacePath(directory, name) {
   return `${normalized}/${name.trim()}`;
 }
 
+export async function copilotStatus() {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.copilotStatus();
+}
+
 export async function repositoryStatus(directory) {
   if (!NativeGitHub) {
     throw new Error("GitHub tools are only available in the Android app.");
