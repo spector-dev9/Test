@@ -94,6 +94,7 @@ export function SettingsView({
   const [linuxBusy, setLinuxBusy] = useState(false);
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxPkg, setLinuxPkg] = useState("");
+  const [rootfsPath, setRootfsPath] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   useEffect(() => {
@@ -126,6 +127,20 @@ export function SettingsView({
       }
     }
     check();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    linuxRootfsPath()
+      .then((value) => {
+        if (!cancelled) setRootfsPath(value || "");
+      })
+      .catch(() => {
+        if (!cancelled) setRootfsPath("");
+      });
     return () => {
       cancelled = true;
     };
@@ -677,7 +692,7 @@ export function SettingsView({
           </div>
           <dl className="detail-list">
             <DetailRow label="Rootfs">
-              <code>{linuxRootfsPath() || "Not extracted"}</code>
+              <code>{rootfsPath || "Not extracted"}</code>
             </DetailRow>
           </dl>
           <div className="settings-runtime-actions">
