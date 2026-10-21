@@ -73,10 +73,11 @@ jobs:
         run: |
           mkdir -p android/app/src/main/assets/linux
           curl -fsSL --retry 3 --retry-delay 2 \
-            -o android/app/src/main/assets/linux/alpine-minirootfs.tar.gz \
+            -o /tmp/alpine-minirootfs.tar.gz \
             https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz
-          cd android/app/src/main/assets/linux
-          echo "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de  alpine-minirootfs.tar.gz" | sha256sum -c -
+          echo "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de  /tmp/alpine-minirootfs.tar.gz" | sha256sum -c -
+          gzip -dc /tmp/alpine-minirootfs.tar.gz > android/app/src/main/assets/linux/alpine-minirootfs.tar
+          echo "909cd5ea844eecebecee4b5e80e98709c7cfbb2e95748c787c211bf1698aaae2  android/app/src/main/assets/linux/alpine-minirootfs.tar" | sha256sum -c -
 
       - name: Sync Capacitor
         run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
@@ -92,7 +93,7 @@ jobs:
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/arm64-v8a/(libgit|libcurl|libpcre2-8|libgit_remote_http|libproot|libproot_loader|libtalloc|libandroid-shmem)\.so'
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'assets/linux/alpine-minirootfs\.tar\.gz'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'assets/linux/alpine-minirootfs\.tar$'
 
       - name: Upload debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

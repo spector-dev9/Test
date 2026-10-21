@@ -54,7 +54,11 @@ public class LinuxEnvironment extends Plugin {
         "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz";
     private static final String ALPINE_ROOTFS_SHA256 =
         "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de";
-    private static final String ASSET_ROOTFS = "linux/alpine-minirootfs.tar.gz";
+    // The same release unpacked: the APK ships the plain tar, the download uses the gzip.
+    private static final String ALPINE_ROOTFS_TAR_SHA256 =
+        "909cd5ea844eecebecee4b5e80e98709c7cfbb2e95748c787c211bf1698aaae2";
+    private static final String ASSET_ROOTFS_TAR = "linux/alpine-minirootfs.tar";
+    private static final String ASSET_ROOTFS_GZ = "linux/alpine-minirootfs.tar.gz";
     private static final String RESOLV_CONF = "nameserver 1.1.1.1\nnameserver 8.8.8.8\n";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
     private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
@@ -197,14 +201,13 @@ public class LinuxEnvironment extends Plugin {
             return rootfs;
         }
 
-        File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.tar.gz");
-        boolean bundled = copyAsset(ASSET_ROOTFS, archive);
-        if (bundled && !matchesSha256(archive, ALPINE_ROOTFS_SHA256)) {
-            archive.delete();
-            bundled = false;
-        }
-        if (!bundled) {
+        File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.archive");
+        if (!copyBundledRootfs(archive)) {
             download(ALPINE_ROOTFS_URL, archive, "rootfs archive");
+            if (!matchesSha256(archive, ALPINE_ROOTFS_SHA256)) {
+                archive.delete();
+                throw new IOException("The downloaded Linux rootfs does not match its checksum.");
+            }
         }
 
         // Extract into a fresh directory every time. Reusing one name means a
@@ -379,12 +382,39 @@ public class LinuxEnvironment extends Plugin {
         }
     }
 
+    private boolean copyBundledRootfs(File destination) throws IOException {
+        String[] assets = {ASSET_ROOTFS_TAR, ASSET_ROOTFS_GZ};
+        String[] checksums = {ALPINE_ROOTFS_TAR_SHA256, ALPINE_ROOTFS_SHA256};
+
+        for (int index = 0; index < assets.length; index++) {
+            if (!copyAsset(assets[index], destination)) {
+                continue;
+            }
+            if (matchesSha256(destination, checksums[index])) {
+                return true;
+            }
+            destination.delete();
+        }
+
+        return false;
+    }
+
+    private static boolean isGzipArchive(File file) throws IOException {
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            int first = input.read();
+            int second = input.read();
+            return first == 0x1f && second == 0x8b;
+        }
+    }
+
     private void extract(File archive, File destination) throws Exception {
         String rootCanonical = destination.getCanonicalPath();
         try (
             InputStream fileInput = new BufferedInputStream(new FileInputStream(archive));
-            GzipCompressorInputStream gzip = new GzipCompressorInputStream(fileInput);
-            TarArchiveInputStream tar = new TarArchiveInputStream(gzip)
+            InputStream content = isGzipArchive(archive)
+                ? new GzipCompressorInputStream(fileInput)
+                : fileInput;
+            TarArchiveInputStream tar = new TarArchiveInputStream(content)
         ) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextEntry()) != null) {
