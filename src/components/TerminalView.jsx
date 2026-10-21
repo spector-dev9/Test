@@ -14,6 +14,11 @@ import {
 import { ptyWebSocketUrl, validateTerminalSize } from "../lib/pty";
 import { openPtySocket } from "../lib/ptySocket";
 import { projectLabel } from "../lib/project";
+import {
+  isLinuxEnvironmentSupported,
+  isLinuxEnvironmentReady,
+  runLinuxCommand,
+} from "../lib/linuxEnvironment.js";
 import { copyText } from "../lib/clipboard";
 
 const RESIZE_DEBOUNCE_MS = 220;
@@ -62,6 +67,12 @@ export function TerminalView({ directory, connected, project, active }) {
   const [error, setError] = useState(null);
   const [terminalCopied, setTerminalCopied] = useState(false);
   const [terminalReady, setTerminalReady] = useState(false);
+  const [linuxSupported, setLinuxSupported] = useState(false);
+  const [linuxReady, setLinuxReady] = useState(false);
+  const [linuxOutput, setLinuxOutput] = useState("");
+  const [linuxCommand, setLinuxCommand] = useState("");
+  const [linuxRunning, setLinuxRunning] = useState(false);
+  const [showLinux, setShowLinux] = useState(false);
   const terminalTitle = project
     ? `${projectLabel(project)} terminal`
     : "OpenCode Terminal";
@@ -166,6 +177,25 @@ export function TerminalView({ directory, connected, project, active }) {
       terminal.dispose();
       terminalRef.current = null;
       fitRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        setLinuxSupported(Boolean(isLinuxEnvironmentSupported()));
+        if (isLinuxEnvironmentSupported()) {
+          const ready = await isLinuxEnvironmentReady();
+          if (!cancelled) setLinuxReady(Boolean(ready?.ready));
+        }
+      } catch {
+        if (!cancelled) setLinuxSupported(false);
+      }
+    }
+    check();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -325,6 +355,24 @@ export function TerminalView({ directory, connected, project, active }) {
     terminalRef.current?.scrollToBottom();
   }
 
+  async function runLinux() {
+    if (!linuxCommand.trim() || linuxRunning) return;
+    setLinuxRunning(true);
+    try {
+      const result = await runLinuxCommand(linuxCommand);
+      setLinuxOutput((previous) =>
+        previous + `$ ${linuxCommand}\n${result.output}\n`
+      );
+      setLinuxCommand("");
+    } catch (failure) {
+      setLinuxOutput((previous) =>
+        previous + `$ ${linuxCommand}\nError: ${failure.message}\n`
+      );
+    } finally {
+      setLinuxRunning(false);
+    }
+  }
+
   const visibleStatus = !enabled
     ? "idle"
     : !connected
@@ -380,6 +428,17 @@ export function TerminalView({ directory, connected, project, active }) {
           >
             {terminalCopied ? "Copied" : "Copy output"}
           </button>
+          {linuxSupported && (
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={() => setShowLinux((prev) => !prev)}
+              title={showLinux ? "Hide Linux shell" : "Show Linux shell"}
+              aria-label={showLinux ? "Hide Linux shell" : "Show Linux shell"}
+            >
+              {showLinux ? "Hide Linux" : "Linux"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -395,6 +454,43 @@ export function TerminalView({ directory, connected, project, active }) {
             <span>{error}</span>
           </div>
         ) : null}
+
+        {showLinux && linuxSupported && (
+          <div className="linux-runner">
+            <div className="linux-runner-head">
+              <span className="panel-kicker">LINUX SHELL</span>
+              <span className="linux-status">
+                {linuxReady ? "ready" : "not ready"}
+              </span>
+            </div>
+            <pre className="linux-output">{linuxOutput}</pre>
+            <div className="linux-input">
+              <input
+                className="linux-input-field"
+                value={linuxCommand}
+                onChange={(event) => setLinuxCommand(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") runLinux();
+                }}
+                placeholder="apk add python3"
+                disabled={!linuxReady || linuxRunning}
+              />
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                onClick={runLinux}
+                disabled={!linuxReady || linuxRunning || !linuxCommand.trim()}
+              >
+                {linuxRunning ? "Running…" : "Run"}
+              </button>
+              {!linuxReady && (
+                <span className="linux-note">
+                  Not ready. Run "Ensure Linux" from settings first.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <p className="terminal-note">

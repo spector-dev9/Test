@@ -19,6 +19,12 @@ import {
   storageStatus,
 } from "../lib/storage";
 import {
+  ensureLinuxEnvironment,
+  installLinuxPackage,
+  isLinuxEnvironmentReady,
+  linuxRootfsPath,
+} from "../lib/linuxEnvironment.js";
+import {
   describeServer,
   offlineLabel,
 } from "../lib/workspace";
@@ -88,6 +94,10 @@ export function SettingsView({
   const [storage, setStorage] = useState(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState("");
+  const [linuxReady, setLinuxReady] = useState(false);
+  const [linuxBusy, setLinuxBusy] = useState(false);
+  const [linuxOutput, setLinuxOutput] = useState("");
+  const [linuxPkg, setLinuxPkg] = useState("");
 
   useEffect(() => {
     if (!storageSupported) return undefined;
@@ -107,6 +117,54 @@ export function SettingsView({
       cancelled = true;
     };
   }, [storageSupported]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const ready = await isLinuxEnvironmentReady();
+        if (!cancelled) setLinuxReady(Boolean(ready?.ready));
+      } catch {
+        if (!cancelled) setLinuxReady(false);
+      }
+    }
+    check();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function ensureLinux() {
+    setLinuxBusy(true);
+    setLinuxOutput("");
+    try {
+      await ensureLinuxEnvironment();
+      const ready = await isLinuxEnvironmentReady();
+      setLinuxReady(Boolean(ready?.ready));
+      setLinuxOutput((previous) => previous + "Linux environment ready.\n");
+    } catch (failure) {
+      setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
+    } finally {
+      setLinuxBusy(false);
+    }
+  }
+
+  async function installLinux() {
+    const pkg = linuxPkg.trim();
+    if (!pkg) return;
+    setLinuxBusy(true);
+    try {
+      const result = await installLinuxPackage(pkg);
+      setLinuxOutput((previous) =>
+        previous + `$ apk add ${pkg}\n${result.output}\n`
+      );
+      setLinuxPkg("");
+    } catch (failure) {
+      setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
+    } finally {
+      setLinuxBusy(false);
+    }
+  }
 
   async function allowStorage() {
     setStorageBusy(true);
@@ -467,6 +525,59 @@ export function SettingsView({
             The runtime and workspace live in app-private storage. Provider
             credentials are only stored in that local runtime; this app does
             not read credentials from outside its sandbox.
+          </p>
+        </div>
+      ) : null}
+
+      {native ? (
+        <div className="panel settings-card">
+          <div className="panel-heading">
+            <div>
+              <span className="panel-kicker">LINUX ENVIRONMENT</span>
+              <h2>Rootless Linux userspace</h2>
+            </div>
+            <span className={`status-chip ${linuxReady ? "online" : "offline"}`}>
+              <span className={`dot ${linuxReady ? "online" : "offline"}`} />
+              {linuxReady ? "Ready" : "Not ready"}
+            </span>
+          </div>
+          <dl className="detail-list">
+            <DetailRow label="Rootfs">
+              <code>{linuxRootfsPath() || "Not extracted"}</code>
+            </DetailRow>
+          </dl>
+          <div className="settings-runtime-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={ensureLinux}
+              disabled={linuxBusy || !native}
+            >
+              {linuxBusy ? "Preparing…" : "Ensure Linux"}
+            </button>
+            <input
+              className="linux-input-field"
+              value={linuxPkg}
+              onChange={(event) => setLinuxPkg(event.target.value)}
+              placeholder="apk package (e.g. python3, nodejs)"
+              disabled={linuxBusy || !linuxReady}
+            />
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={installLinux}
+              disabled={linuxBusy || !linuxReady || !linuxPkg.trim()}
+            >
+              Install
+            </button>
+          </div>
+          {linuxOutput ? (
+            <pre className="settings-log">{linuxOutput}</pre>
+          ) : null}
+          <p className="panel-note">
+            Downloads and extracts an Alpine aarch64 rootfs into app-private
+            storage. Commands run inside that userspace. The first launch
+            downloads the rootfs over your network.
           </p>
         </div>
       ) : null}

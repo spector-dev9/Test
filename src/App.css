@@ -5776,4 +5776,73 @@ h2 {
   .panel {
     box-shadow: 0 10px 26px rgba(4, 5, 15, 0.16);
   }
+
+  .linux-runner {
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    background: #19191e;
+    margin-top: 12px;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .linux-runner-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-strong);
+    background: #1c1c22;
+  }
+
+  .linux-runner-head .panel-kicker {
+    margin: 0;
+  }
+
+  .linux-status {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: #8e8ca6;
+  }
+
+  .linux-output {
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace;
+    font-size: 11px;
+    color: #c4c4ce;
+    padding: 10px 12px;
+    margin: 0;
+    border-bottom: 1px solid var(--border-strong);
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  .linux-input {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    align-items: center;
+  }
+
+  .linux-input-field {
+    flex: 1;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    color: #e7e7ee;
+    background: #17171c;
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  .linux-note {
+    font-size: 10px;
+    color: #8e8ca6;
+    margin-left: 8px;
+  }
+
 }
