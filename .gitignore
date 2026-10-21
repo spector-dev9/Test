@@ -39,6 +39,7 @@ android/app/src/main/jniLibs/arm64-v8a/*
 !android/app/src/main/jniLibs/arm64-v8a/libngtcp2_crypto_ossl.so
 !android/app/src/main/jniLibs/arm64-v8a/libssh2.so
 android/app/src/main/assets/runtime/cert.pem
+android/app/src/main/assets/linux/
 
 # Python bytecode
 __pycache__/

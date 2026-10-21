@@ -882,10 +882,10 @@ export function SettingsView({
               <pre className="settings-log">{linuxOutput}</pre>
             ) : null}
             <p className="panel-note">
-              Downloads an Alpine aarch64 rootfs and a static proot binary into
-              app-private storage. Commands and packages run in a userspace
-              chroot (no root required). The first launch downloads both over
-              your network.
+              Bundled with the app: an Alpine aarch64 rootfs and a static proot
+              binary are unpacked into app-private storage on first use.
+              Commands and packages run in a userspace chroot (no root
+              required); only package installs use your network.
             </p>
           </div>
         ) : null}

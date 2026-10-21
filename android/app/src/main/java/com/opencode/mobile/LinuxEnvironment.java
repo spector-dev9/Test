@@ -15,6 +15,7 @@ import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -48,6 +49,10 @@ public class LinuxEnvironment extends Plugin {
     // Official Alpine aarch64 minirootfs mirror. Change this constant if the mirror/path moves.
     private static final String ALPINE_ROOTFS_URL =
         "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz";
+    private static final String ALPINE_ROOTFS_SHA256 =
+        "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de";
+    private static final String ASSET_ROOTFS = "linux/alpine-minirootfs.tar.gz";
+    private static final String ASSET_PROOT = "linux/proot";
     // Static Termux-based proot with an embedded ELF loader (skirsten builds). Verified on device.
     private static final String PROOT_URL =
         "https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot";
@@ -184,7 +189,14 @@ public class LinuxEnvironment extends Plugin {
         }
 
         File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.tar.gz");
-        download(ALPINE_ROOTFS_URL, archive, "rootfs archive");
+        boolean bundled = copyAsset(ASSET_ROOTFS, archive);
+        if (bundled && !matchesSha256(archive, ALPINE_ROOTFS_SHA256)) {
+            archive.delete();
+            bundled = false;
+        }
+        if (!bundled) {
+            download(ALPINE_ROOTFS_URL, archive, "rootfs archive");
+        }
 
         // Extract into a fresh directory every time. Reusing one name means a
         // leftover entry from a killed extraction (which the app may no longer
@@ -206,6 +218,10 @@ public class LinuxEnvironment extends Plugin {
             }
 
             deleteRecursively(rootfs);
+            File parent = rootfs.getParentFile();
+            if (parent != null) {
+                mkdirs(parent);
+            }
             if (!staging.renameTo(rootfs)) {
                 throw new IOException("The Linux rootfs could not be activated.");
             }
@@ -236,7 +252,14 @@ public class LinuxEnvironment extends Plugin {
         }
 
         File archive = new File(getContext().getCacheDir(), "proot.aarch64");
-        download(PROOT_URL, archive, "proot binary");
+        boolean bundled = copyAsset(ASSET_PROOT, archive);
+        if (bundled && !matchesSha256(archive, PROOT_SHA256)) {
+            archive.delete();
+            bundled = false;
+        }
+        if (!bundled) {
+            download(PROOT_URL, archive, "proot binary");
+        }
         verifySha256(archive, PROOT_SHA256);
 
         File parent = proot.getParentFile();
@@ -504,6 +527,46 @@ public class LinuxEnvironment extends Plugin {
 
     private static String name(File file) {
         return new File(file.getAbsolutePath()).getName();
+    }
+
+    private boolean matchesSha256(File file, String expectedHex) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+                byte[] buffer = new byte[128 * 1024];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest.digest()) {
+                hex.append(String.format(Locale.US, "%02x", b));
+            }
+            return hex.toString().equals(expectedHex.toLowerCase(Locale.US));
+        } catch (Exception failure) {
+            return false;
+        }
+    }
+
+    private boolean copyAsset(String name, File destination) throws IOException {
+        try (InputStream input = getContext().getAssets().open(name)) {
+            try (OutputStream output = new FileOutputStream(destination)) {
+                byte[] buffer = new byte[128 * 1024];
+                int read;
+                long total = 0;
+                while ((read = input.read(buffer)) != -1) {
+                    total += read;
+                    if (total > MAX_ROOTFS_BYTES) {
+                        throw new IOException("The embedded Linux asset is too large.");
+                    }
+                    output.write(buffer, 0, read);
+                }
+            }
+            return true;
+        } catch (FileNotFoundException missing) {
+            return false;
+        }
     }
 
     private void verifySha256(File file, String expectedHex) throws Exception {
