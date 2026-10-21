@@ -44,7 +44,10 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 public class LinuxEnvironment extends Plugin {
     private static final String TAG = "LinuxEnvironment";
     private static final String ROOTFS_RELATIVE = "linux/rootfs";
-    private static final String PROOT_RELATIVE = "linux/bin/proot";
+    private static final String PROOT_LIBRARY = "libproot.so";
+    private static final String PROOT_LOADER_LIBRARY = "libproot_loader.so";
+    private static final String PROOT_TALLOC_LIBRARY = "libtalloc.so";
+    private static final String PROOT_SHMEM_LIBRARY = "libandroid-shmem.so";
     private static final String MARKER_READY = ".ready";
     // Official Alpine aarch64 minirootfs mirror. Change this constant if the mirror/path moves.
     private static final String ALPINE_ROOTFS_URL =
@@ -52,12 +55,6 @@ public class LinuxEnvironment extends Plugin {
     private static final String ALPINE_ROOTFS_SHA256 =
         "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de";
     private static final String ASSET_ROOTFS = "linux/alpine-minirootfs.tar.gz";
-    private static final String ASSET_PROOT = "linux/proot";
-    // Static Termux-based proot with an embedded ELF loader (skirsten builds). Verified on device.
-    private static final String PROOT_URL =
-        "https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot";
-    private static final String PROOT_SHA256 =
-        "c902f35b3bce4013d2e78e3bf360b606523d55ab7b907578938577b243bfca38";
     private static final String RESOLV_CONF = "nameserver 1.1.1.1\nnameserver 8.8.8.8\n";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
     private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
@@ -157,7 +154,11 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private boolean isLinuxReady() {
-        return hasRootfs() && prootPath().isFile()
+        return hasRootfs()
+            && prootPath().isFile()
+            && prootLoaderPath().isFile()
+            && nativeLibraryFile(PROOT_TALLOC_LIBRARY).isFile()
+            && nativeLibraryFile(PROOT_SHMEM_LIBRARY).isFile()
             && new File(rootfsPath(), MARKER_READY).isFile();
     }
 
@@ -173,7 +174,15 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private File prootPath() {
-        return new File(getContext().getFilesDir(), PROOT_RELATIVE);
+        return nativeLibraryFile(PROOT_LIBRARY);
+    }
+
+    private File prootLoaderPath() {
+        return nativeLibraryFile(PROOT_LOADER_LIBRARY);
+    }
+
+    private File nativeLibraryFile(String name) {
+        return new File(getContext().getApplicationInfo().nativeLibraryDir, name);
     }
 
     private File prootTmpDir() throws IOException {
@@ -245,32 +254,17 @@ public class LinuxEnvironment extends Plugin {
         }
     }
 
-    private void ensureProot() throws Exception {
-        File proot = prootPath();
-        if (proot.isFile() && proot.canExecute()) {
-            return;
+    private void ensureProot() throws IOException {
+        File loader = prootLoaderPath();
+        if (!prootPath().isFile() || !loader.isFile()) {
+            throw new IOException(
+                "The embedded PRoot runtime is missing from this build.");
         }
-
-        File archive = new File(getContext().getCacheDir(), "proot.aarch64");
-        boolean bundled = copyAsset(ASSET_PROOT, archive);
-        if (bundled && !matchesSha256(archive, PROOT_SHA256)) {
-            archive.delete();
-            bundled = false;
+        if (!nativeLibraryFile(PROOT_TALLOC_LIBRARY).isFile()
+            || !nativeLibraryFile(PROOT_SHMEM_LIBRARY).isFile()) {
+            throw new IOException(
+                "The embedded PRoot libraries are missing from this build.");
         }
-        if (!bundled) {
-            download(PROOT_URL, archive, "proot binary");
-        }
-        verifySha256(archive, PROOT_SHA256);
-
-        File parent = proot.getParentFile();
-        mkdirs(parent);
-        deleteRecursively(proot);
-        if (!archive.renameTo(proot)) {
-            throw new IOException("The proot binary could not be installed.");
-        }
-        proot.setExecutable(true, false);
-        proot.setReadable(true, false);
-        archive.delete();
     }
 
     private void writeResolv(File rootfs) throws IOException {
@@ -288,6 +282,9 @@ public class LinuxEnvironment extends Plugin {
 
         List<String> argv = new ArrayList<>();
         argv.add(proot.getAbsolutePath());
+        // Android SELinux denies hard links inside app-private storage, which
+        // apk needs when installing packages. PRoot can emulate them as symlinks.
+        argv.add("--link2symlink");
         argv.add("-0");
         argv.add("-r");
         argv.add(rootfs.getAbsolutePath() + "/");
@@ -316,6 +313,7 @@ public class LinuxEnvironment extends Plugin {
         // settings and the Termux prefix) leak into the guest and break apk.
         env.clear();
         env.put("PROOT_TMP_DIR", prootTmpDir().getAbsolutePath());
+        env.put("PROOT_LOADER", prootLoaderPath().getAbsolutePath());
 
         Process process = builder.start();
         Thread watchdog = new Thread(() -> {
@@ -520,8 +518,34 @@ public class LinuxEnvironment extends Plugin {
         try {
             Os.link(origin.getAbsolutePath(), link.getAbsolutePath());
         } catch (ErrnoException failure) {
+            // Android SELinux denies hard links inside app-private storage.
+            // Copying keeps the extracted rootfs usable; PRoot also emulates
+            // later package-install hard links with --link2symlink.
+            if (failure.errno == OsConstants.EACCES
+                || failure.errno == OsConstants.EPERM
+                || failure.errno == OsConstants.EXDEV) {
+                copyFile(origin, link);
+                return;
+            }
             throw new IOException(
                 "Could not create hard link " + name(link) + ": " + failure.getMessage());
+        }
+    }
+
+    private static void copyFile(File source, File destination) throws IOException {
+        File parent = destination.getParentFile();
+        if (parent != null) {
+            mkdirs(parent);
+        }
+        try (
+            InputStream input = new BufferedInputStream(new FileInputStream(source));
+            OutputStream output = new FileOutputStream(destination)
+        ) {
+            byte[] buffer = new byte[128 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
         }
     }
 
@@ -566,26 +590,6 @@ public class LinuxEnvironment extends Plugin {
             return true;
         } catch (FileNotFoundException missing) {
             return false;
-        }
-    }
-
-    private void verifySha256(File file, String expectedHex) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
-            byte[] buffer = new byte[128 * 1024];
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                digest.update(buffer, 0, read);
-            }
-        }
-        StringBuilder hex = new StringBuilder();
-        for (byte b : digest.digest()) {
-            hex.append(String.format(Locale.US, "%02x", b));
-        }
-        if (!hex.toString().equals(expectedHex.toLowerCase(Locale.US))) {
-            throw new IOException(
-                "Downloaded proot does not match its checksum. Expected " + expectedHex
-                    + ", got " + hex + ".");
         }
     }
 

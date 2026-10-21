@@ -6,6 +6,7 @@ import {
 } from "../lib/opencode.js";
 
 const HEALTHY_POLL_MS = 20000;
+const HIDDEN_HEALTHY_POLL_MS = 60000;
 const RETRY_BASE_MS = 2000;
 const RETRY_MAX_MS = 30000;
 
@@ -123,7 +124,10 @@ export function useOpenCodeProjects() {
       if (disposed || healthy === null) return;
 
       const delay = healthy
-        ? HEALTHY_POLL_MS
+        ? typeof document !== "undefined" &&
+          document.visibilityState === "hidden"
+          ? HIDDEN_HEALTHY_POLL_MS
+          : HEALTHY_POLL_MS
         : retryDelayMs(failuresRef.current);
 
       timer = window.setTimeout(() => {

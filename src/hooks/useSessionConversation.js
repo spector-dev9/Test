@@ -13,7 +13,10 @@ import {
   sendCommand,
   sendPromptAsync,
 } from "../lib/opencode";
-import { isConversationSettled } from "../lib/workspace";
+import {
+  isConversationSettled,
+  normalizeConversation,
+} from "../lib/workspace";
 
 const initialMessages = {
   status: "idle",
@@ -22,10 +25,114 @@ const initialMessages = {
   errorKind: null,
 };
 
-const POLL_INTERVAL_MS = 1200;
+const POLL_INTERVAL_MS = 1600;
+const HIDDEN_POLL_INTERVAL_MS = 5000;
 const IDLE_CONFIRMATIONS = 2;
 const SUBMIT_GRACE_MS = 5000;
 const POLL_FAILURE_LIMIT = 3;
+
+function isVisible() {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
+function textSignature(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  }
+  return `${value.length}:${hash >>> 0}`;
+}
+
+const signatureCache = new WeakMap();
+const listSignatureCache = new WeakMap();
+
+function listSignature(rows) {
+  if (!Array.isArray(rows)) return "";
+  const cached = listSignatureCache.get(rows);
+  if (cached !== undefined) return cached;
+
+  const signature = JSON.stringify(rows);
+  listSignatureCache.set(rows, signature);
+  return signature;
+}
+
+function applyList(setValue, rows) {
+  const signature = listSignature(rows);
+
+  setValue((previous) => {
+    if (Array.isArray(previous) && listSignature(previous) === signature) {
+      return previous;
+    }
+
+    return rows;
+  });
+}
+
+function messageSignature(rows) {
+  if (!Array.isArray(rows)) return "";
+
+  return rows
+    .map((row) => {
+      const text = typeof row?.text === "string" ? row.text : "";
+      const tools = Array.isArray(row?.tools) ? row.tools : [];
+      const attachments = Array.isArray(row?.attachments)
+        ? row.attachments.map((attachment) =>
+            [attachment?.filename ?? "", attachment?.mime ?? ""].join(":"),
+          )
+        : [];
+
+      return [
+        row?.id ?? "",
+        row?.role ?? "",
+        row?.model ?? "",
+        row?.created ?? "",
+        row?.completed ? "1" : "0",
+        textSignature(text),
+        attachments.join(","),
+        row?.error ?? "",
+        ...tools.map((tool) =>
+          [
+            tool?.id ?? "",
+            tool?.name ?? "",
+            tool?.status ?? "",
+            tool?.title ?? "",
+            tool?.detail ?? "",
+          ].join(":"),
+        ),
+      ].join("|");
+    })
+    .join("\n");
+}
+
+function rowsSignature(rows) {
+  if (!Array.isArray(rows)) return "";
+  const cached = signatureCache.get(rows);
+  if (cached !== undefined) return cached;
+
+  const signature = messageSignature(normalizeConversation(rows));
+  signatureCache.set(rows, signature);
+  return signature;
+}
+
+function applyMessageRows(setMessages, rows) {
+  const signature = rowsSignature(rows);
+
+  setMessages((previous) => {
+    if (
+      previous.status === "ready" &&
+      rowsSignature(previous.data) === signature
+    ) {
+      return previous;
+    }
+
+    return {
+      status: "ready",
+      data: rows,
+      error: null,
+      errorKind: null,
+    };
+  });
+}
 
 function delay(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -89,7 +196,10 @@ async function loadSnapshot(directory, sessionID, signal) {
 
 function applyQuestionResult(result, sessionID, setQuestions, setError) {
   if (result.questions.status === "fulfilled") {
-    setQuestions(questionsForSession(result.questions.value, sessionID));
+    applyList(
+      setQuestions,
+      questionsForSession(result.questions.value, sessionID),
+    );
     setError(null);
   } else {
     setError("Questions could not be loaded.");
@@ -98,7 +208,7 @@ function applyQuestionResult(result, sessionID, setQuestions, setError) {
 
 function applyTodoResult(result, setTodos, setError) {
   if (result.todos.status === "fulfilled") {
-    setTodos(result.todos.value);
+    applyList(setTodos, result.todos.value);
     setError(null);
   } else {
     setError("The todo list could not be loaded.");
@@ -216,12 +326,7 @@ export function useSessionConversation({
       }
 
       if (result.messages.status === "fulfilled") {
-        setMessages({
-          status: "ready",
-          data: result.messages.value,
-          error: null,
-          errorKind: null,
-        });
+        applyMessageRows(setMessages, result.messages.value);
       } else {
         const failure = connectionFailure(
           result.messages.reason,
@@ -241,7 +346,8 @@ export function useSessionConversation({
       }
 
       if (result.permissions.status === "fulfilled") {
-        setPermissions(
+        applyList(
+          setPermissions,
           permissionsForSession(result.permissions.value, sessionId),
         );
       }
@@ -275,12 +381,16 @@ export function useSessionConversation({
     async function poll() {
       while (!stopped) {
         try {
-          await delay(POLL_INTERVAL_MS, controller.signal);
+          await delay(
+            isVisible() ? POLL_INTERVAL_MS : HIDDEN_POLL_INTERVAL_MS,
+            controller.signal,
+          );
         } catch {
           return;
         }
 
         if (stopped || epoch !== epochRef.current) return;
+        if (!isVisible()) continue;
 
         const requestId = messageRequestRef.current + 1;
         messageRequestRef.current = requestId;
@@ -300,16 +410,12 @@ export function useSessionConversation({
         }
 
         if (result.messages.status === "fulfilled") {
-          setMessages({
-            status: "ready",
-            data: result.messages.value,
-            error: null,
-            errorKind: null,
-          });
+          applyMessageRows(setMessages, result.messages.value);
         }
 
         if (result.permissions.status === "fulfilled") {
-          setPermissions(
+          applyList(
+            setPermissions,
             permissionsForSession(result.permissions.value, sessionId),
           );
         }
@@ -404,12 +510,7 @@ export function useSessionConversation({
     }
 
     if (result.messages.status === "fulfilled") {
-      setMessages({
-        status: "ready",
-        data: result.messages.value,
-        error: null,
-        errorKind: null,
-      });
+      applyMessageRows(setMessages, result.messages.value);
     } else {
       const failure = connectionFailure(
         result.messages.reason,
@@ -425,7 +526,8 @@ export function useSessionConversation({
     }
 
     if (result.permissions.status === "fulfilled") {
-      setPermissions(
+      applyList(
+        setPermissions,
         permissionsForSession(result.permissions.value, sessionId),
       );
     }
@@ -536,16 +638,12 @@ export function useSessionConversation({
       }
 
       if (result.messages.status === "fulfilled") {
-        setMessages({
-          status: "ready",
-          data: result.messages.value,
-          error: null,
-          errorKind: null,
-        });
+        applyMessageRows(setMessages, result.messages.value);
       }
 
       if (result.permissions.status === "fulfilled") {
-        setPermissions(
+        applyList(
+          setPermissions,
           permissionsForSession(result.permissions.value, sessionId),
         );
       }
@@ -593,16 +691,12 @@ export function useSessionConversation({
         const result = await loadSnapshot(directory, sessionId);
 
         if (result.messages.status === "fulfilled") {
-          setMessages({
-            status: "ready",
-            data: result.messages.value,
-            error: null,
-            errorKind: null,
-          });
+          applyMessageRows(setMessages, result.messages.value);
         }
 
         if (result.permissions.status === "fulfilled") {
-          setPermissions(
+          applyList(
+            setPermissions,
             permissionsForSession(result.permissions.value, sessionId),
           );
         } else {
@@ -646,12 +740,7 @@ export function useSessionConversation({
         const result = await loadSnapshot(directory, sessionId);
 
         if (result.messages.status === "fulfilled") {
-          setMessages({
-            status: "ready",
-            data: result.messages.value,
-            error: null,
-            errorKind: null,
-          });
+          applyMessageRows(setMessages, result.messages.value);
         }
 
         applyQuestionResult(
@@ -702,12 +791,7 @@ export function useSessionConversation({
         const result = await loadSnapshot(directory, sessionId);
 
         if (result.messages.status === "fulfilled") {
-          setMessages({
-            status: "ready",
-            data: result.messages.value,
-            error: null,
-            errorKind: null,
-          });
+          applyMessageRows(setMessages, result.messages.value);
         }
 
         applyQuestionResult(

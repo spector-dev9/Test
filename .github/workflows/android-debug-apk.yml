@@ -75,12 +75,8 @@ jobs:
           curl -fsSL --retry 3 --retry-delay 2 \
             -o android/app/src/main/assets/linux/alpine-minirootfs.tar.gz \
             https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz
-          curl -fsSL --retry 3 --retry-delay 2 \
-            -o android/app/src/main/assets/linux/proot \
-            https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot
           cd android/app/src/main/assets/linux
           echo "041fa34a81788242df9e78fa69b97ab45b8ec47ddbf88864755610414a7bf3de  alpine-minirootfs.tar.gz" | sha256sum -c -
-          echo "c902f35b3bce4013d2e78e3bf360b606523d55ab7b907578938577b243bfca38  proot" | sha256sum -c -
 
       - name: Sync Capacitor
         run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
@@ -95,8 +91,8 @@ jobs:
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/arm64-v8a/(libgit|libcurl|libpcre2-8|libgit_remote_http)\.so'
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'assets/linux/(alpine-minirootfs\.tar\.gz|proot)'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/arm64-v8a/(libgit|libcurl|libpcre2-8|libgit_remote_http|libproot|libproot_loader|libtalloc|libandroid-shmem)\.so'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'assets/linux/alpine-minirootfs\.tar\.gz'
 
       - name: Upload debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
