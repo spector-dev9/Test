@@ -835,6 +835,7 @@ test("allows the GitHub Copilot OAuth authorize request", async () => {
   assert.equal(response.status, 200);
   assert.equal(http.calls.length, 1);
   assert.equal(http.calls[0].method, "POST");
+  assert.equal(http.calls[0].readTimeout, 30000);
   assert.deepEqual(http.calls[0].data, {
     method: 0,
     inputs: { deploymentType: "github.com" },
@@ -862,6 +863,7 @@ test("allows the GitHub Copilot OAuth callback request", async () => {
   assert.equal(await response.json(), true);
   assert.equal(http.calls.length, 1);
   assert.equal(http.calls[0].method, "POST");
+  assert.equal(http.calls[0].readTimeout, 16 * 60 * 1000);
   assert.deepEqual(http.calls[0].data, { method: 0 });
 });
 

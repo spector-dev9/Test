@@ -39,6 +39,7 @@ import {
 
 const MODEL_STORAGE_KEY = "opencode-mobile.preferred-model";
 const WORKSPACE_STORAGE_KEY = "opencode-mobile.workspace-directory";
+const RUNTIME_READY_STORAGE_KEY = "opencode-mobile.runtime-ready";
 
 function readStoredModel() {
   if (typeof window === "undefined") return null;
@@ -115,6 +116,26 @@ function storeWorkspaceDirectory(directory) {
   }
 }
 
+function readStoredRuntimeReady() {
+  if (typeof window === "undefined") return false;
+
+  try {
+    return window.localStorage.getItem(RUNTIME_READY_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storeRuntimeReady() {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(RUNTIME_READY_STORAGE_KEY, "1");
+  } catch {
+    return;
+  }
+}
+
 function readStoredProjectId() {
   if (typeof window === "undefined") return null;
 
@@ -151,6 +172,7 @@ export default function App() {
   const localServer = useLocalServer();
   const retryLocalServer = localServer.retry;
   const [serverGateDismissed, setServerGateDismissed] = useState(false);
+  const [runtimeReady, setRuntimeReady] = useState(readStoredRuntimeReady);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState("chat");
   const [selectedSessionId, setSelectedSessionId] = useState(null);
@@ -169,8 +191,28 @@ export default function App() {
   const wasMenuOpen = useRef(false);
 
   const connected = Boolean(health.data?.healthy);
+  const serverGateImmediate =
+    localServer.state === "downloading" ||
+    localServer.state === "extracting" ||
+    localServer.state === "error" ||
+    localServer.state === "stopped" ||
+    localServer.state === "unavailable";
   const showServerGate =
-    localServer.supported && !connected && !serverGateDismissed;
+    localServer.supported &&
+    !connected &&
+    !serverGateDismissed &&
+    (serverGateImmediate || !runtimeReady);
+
+  useEffect(() => {
+    if (!connected || runtimeReady) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setRuntimeReady(true);
+      storeRuntimeReady();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [connected, runtimeReady]);
 
   useEffect(() => {
     if (localServer.state === "running") refreshProjects();

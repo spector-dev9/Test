@@ -33,6 +33,8 @@ const PROVIDERS_PATH = "/config/providers";
 const PROVIDER_PATH = "/provider";
 const PROVIDER_AUTH_PATH = "/provider/auth";
 const PROVIDER_OAUTH_PATH = /^\/provider\/([a-z0-9-]+)\/oauth\/(authorize|callback)$/;
+const GITHUB_OAUTH_CALLBACK_PATH = "/provider/github-copilot/oauth/callback";
+const GITHUB_OAUTH_CALLBACK_TIMEOUT_MS = 16 * 60 * 1000;
 const COMMANDS_PATH = "/command";
 const VCS_STATUS_PATH = "/vcs/status";
 const VCS_DIFF_PATH = "/vcs/diff";
@@ -779,7 +781,10 @@ function nativeRequestOptions(url, method, headers, data) {
     headers,
     responseType: "text",
     connectTimeout: 10000,
-    readTimeout: 30000,
+    readTimeout:
+      url.pathname === GITHUB_OAUTH_CALLBACK_PATH
+        ? GITHUB_OAUTH_CALLBACK_TIMEOUT_MS
+        : 30000,
     disableRedirects: true,
   };
 

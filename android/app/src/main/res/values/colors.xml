@@ -4,4 +4,5 @@
     <color name="colorPrimaryDark">#101013</color>
     <color name="colorAccent">#8b7cf0</color>
     <color name="appBackground">#101013</color>
+    <color name="splashBackground">#10111b</color>
 </resources>

@@ -5,6 +5,7 @@ import android.view.View;
 
 import androidx.activity.EdgeToEdge;
 import androidx.core.graphics.Insets;
+import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
@@ -14,6 +15,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen.installSplashScreen(this);
         registerPlugin(PtySocketPlugin.class);
         registerPlugin(LocalServerPlugin.class);
         registerPlugin(StoragePlugin.class);

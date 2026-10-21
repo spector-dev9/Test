@@ -16,6 +16,7 @@
     "accessOrigins": []
   },
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "backgroundColor": "#10111b"
   }
 }

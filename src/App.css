@@ -4053,12 +4053,9 @@ h2 {
 
 .topbar {
   border-bottom-color: rgba(61, 62, 90, 0.62);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(22, 23, 38, 0.96),
-      rgba(16, 17, 27, 0.92)
-    );
+  background: linear-gradient(180deg, #161726, #10111b);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
