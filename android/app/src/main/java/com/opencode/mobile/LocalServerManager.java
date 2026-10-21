@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
+import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
 
@@ -69,6 +70,10 @@ final class LocalServerManager {
         void onResult(Snapshot snapshot, String error);
     }
 
+    interface TransferCallback {
+        void onResult(long bytes, String output, String error);
+    }
+
     static final class Snapshot {
         final String state;
         final int progress;
@@ -124,6 +129,7 @@ final class LocalServerManager {
 
     private final Context context;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService transferExecutor = Executors.newSingleThreadExecutor();
     private final OkHttpClient downloadClient = new OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
@@ -290,6 +296,220 @@ final class LocalServerManager {
             emit(null);
             runStartWithCallback(callback);
         });
+    }
+
+    void exportSession(String sessionID, Uri destination, TransferCallback callback) {
+        transferExecutor.execute(() -> {
+            long bytes = 0;
+            try {
+                CliContext cli = prepareCli();
+                ProcessBuilder builder = new ProcessBuilder(cliCommand(cli, "export", sessionID));
+                builder.directory(cli.workspace);
+                configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
+                Process process = builder.start();
+
+                StringBuilder errors = new StringBuilder();
+                Thread errorPump = captureAsync(process.getErrorStream(), errors, "opencode-export-stderr");
+
+                try (OutputStream output = getContext().getContentResolver()
+                    .openOutputStream(destination, "wt")) {
+                    if (output == null) {
+                        throw new IOException("The selected export file could not be opened.");
+                    }
+                    byte[] buffer = new byte[128 * 1024];
+                    int read;
+                    InputStream input = process.getInputStream();
+                    while ((read = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, read);
+                        bytes += read;
+                    }
+                    output.flush();
+                }
+
+                if (!process.waitFor(5, TimeUnit.MINUTES)) {
+                    process.destroyForcibly();
+                    throw new IOException("The session export timed out.");
+                }
+                errorPump.join(5000);
+                if (process.exitValue() != 0) {
+                    throw new IOException(
+                        "The session export failed: " + tail(errors.toString(), "exit code " + process.exitValue())
+                    );
+                }
+                callback.onResult(bytes, "", null);
+            } catch (Throwable failure) {
+                Log.e(TAG, "Session export failed", failure);
+                callback.onResult(0, "", describe(failure));
+            }
+        });
+    }
+
+    void importSession(Uri source, TransferCallback callback) {
+        transferExecutor.execute(() -> {
+            try {
+                CliContext cli = prepareCli();
+                File staged = new File(cli.temp, "session-import-" + System.currentTimeMillis() + ".json");
+                try {
+                    try (InputStream input = getContext().getContentResolver().openInputStream(source)) {
+                        if (input == null) {
+                            throw new IOException("The selected session file could not be read.");
+                        }
+                        try (OutputStream output = new FileOutputStream(staged)) {
+                            byte[] buffer = new byte[128 * 1024];
+                            int read;
+                            long total = 0;
+                            while ((read = input.read(buffer)) != -1) {
+                                total += read;
+                                if (total > 512L * 1024L * 1024L) {
+                                    throw new IOException("The session file is too large to import.");
+                                }
+                                output.write(buffer, 0, read);
+                            }
+                        }
+                    }
+
+                    ProcessBuilder builder = new ProcessBuilder(
+                        cliCommand(cli, "import", staged.getAbsolutePath())
+                    );
+                    builder.directory(cli.workspace);
+                    builder.redirectErrorStream(true);
+                    configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
+                    Process process = builder.start();
+
+                    StringBuilder output = new StringBuilder();
+                    Thread outputPump = captureAsync(process.getInputStream(), output, "opencode-import-output");
+
+                    if (!process.waitFor(5, TimeUnit.MINUTES)) {
+                        process.destroyForcibly();
+                        throw new IOException("The session import timed out.");
+                    }
+                    outputPump.join(5000);
+                    if (process.exitValue() != 0) {
+                        throw new IOException(
+                            "The session import failed: " + tail(output.toString(), "exit code " + process.exitValue())
+                        );
+                    }
+                    callback.onResult(0, tail(output.toString(), "Session imported."), null);
+                } finally {
+                    staged.delete();
+                }
+            } catch (Throwable failure) {
+                Log.e(TAG, "Session import failed", failure);
+                callback.onResult(0, "", describe(failure));
+            }
+        });
+    }
+
+    private CliContext prepareCli() throws Exception {
+        JSONObject meta = readMeta();
+        File files = context.getFilesDir();
+        File home = new File(files, "home");
+        File workspace = new File(files, "workspace");
+        File temp = new File(context.getCacheDir(), "tmp");
+        mkdirs(home);
+        mkdirs(workspace);
+        mkdirs(temp);
+        writeResolver(files);
+        ensureRuntime(meta, files);
+        ensureYourCertificates(meta, files);
+        return new CliContext(meta, files, home, workspace, temp);
+    }
+
+    private List<String> cliCommand(CliContext cli, String... arguments) throws IOException {
+        File loader = new File(context.getApplicationInfo().nativeLibraryDir, "libopencode_loader.so");
+        File binary = new File(runtimeDir(), "opencode");
+        if (!loader.isFile()) {
+            throw new IOException("The embedded Android runtime loader is missing.");
+        }
+        if (!binary.isFile()) {
+            throw new IOException("The OpenCode binary is missing.");
+        }
+        List<String> command = new ArrayList<>();
+        command.add(loader.getAbsolutePath());
+        command.add("--library-path");
+        command.add(runtimeDir().getAbsolutePath());
+        command.add(binary.getAbsolutePath());
+        command.addAll(Arrays.asList(arguments));
+        return command;
+    }
+
+    private void configureEnvironment(
+        ProcessBuilder builder,
+        JSONObject meta,
+        File files,
+        File home,
+        File workspace,
+        File temp
+    ) throws Exception {
+        File runtime = runtimeDir();
+        File shim = new File(context.getApplicationInfo().nativeLibraryDir, "librust_pty_bionic.so");
+        File certificates = new File(runtime, "cert.pem");
+
+        Map<String, String> environment = builder.environment();
+        environment.put("HOME", home.getAbsolutePath());
+        environment.put("PREFIX", meta.getString("androidPrefix"));
+        environment.put("XDG_CONFIG_HOME", new File(home, ".config").getAbsolutePath());
+        environment.put("XDG_DATA_HOME", new File(home, ".local/share").getAbsolutePath());
+        environment.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
+        environment.put("TMPDIR", temp.getAbsolutePath());
+        environment.put("TMP", temp.getAbsolutePath());
+        environment.put("TEMP", temp.getAbsolutePath());
+        environment.put("SHELL", "/system/bin/sh");
+        environment.put("TERM", "xterm-256color");
+        environment.put("PATH", "/system/bin:/system/xbin:/product/bin:/apex/com.android.runtime/bin");
+        environment.put("SSL_CERT_FILE", certificates.getAbsolutePath());
+        environment.put("BUN_PTY_LIB", shim.getAbsolutePath());
+        environment.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
+        environment.put("LD_LIBRARY_PATH", runtime.getAbsolutePath());
+        environment.remove("LD_PRELOAD");
+        GitRuntime.applyEnvironment(builder, context);
+    }
+
+    private static Thread captureAsync(InputStream source, StringBuilder sink, String name) {
+        Thread thread = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(source, StandardCharsets.UTF_8)
+            )) {
+                char[] buffer = new char[4096];
+                int read;
+                while ((read = reader.read(buffer)) != -1) {
+                    synchronized (sink) {
+                        if (sink.length() < 8000) {
+                            sink.append(buffer, 0, read);
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
+                // The process side of the stream closed.
+            }
+        }, name);
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
+
+    private static String tail(String text, String fallback) {
+        String trimmed = text == null ? "" : text.trim();
+        if (trimmed.isEmpty()) return fallback;
+        return trimmed.length() <= 800
+            ? trimmed
+            : trimmed.substring(trimmed.length() - 800);
+    }
+
+    private static final class CliContext {
+        final JSONObject meta;
+        final File files;
+        final File home;
+        final File workspace;
+        final File temp;
+
+        CliContext(JSONObject meta, File files, File home, File workspace, File temp) {
+            this.meta = meta;
+            this.files = files;
+            this.home = home;
+            this.workspace = workspace;
+            this.temp = temp;
+        }
     }
 
     JSObject statusObject() {
@@ -794,7 +1014,6 @@ final class LocalServerManager {
         File loader = new File(context.getApplicationInfo().nativeLibraryDir, "libopencode_loader.so");
         File shim = new File(context.getApplicationInfo().nativeLibraryDir, "librust_pty_bionic.so");
         File binary = new File(runtime, "opencode");
-        File certificates = new File(runtime, "cert.pem");
 
         if (!loader.isFile()) {
             throw new IOException("The embedded Android runtime loader is missing.");
@@ -825,24 +1044,7 @@ final class LocalServerManager {
         builder.directory(workspace);
         builder.redirectErrorStream(true);
 
-        Map<String, String> environment = builder.environment();
-        environment.put("HOME", home.getAbsolutePath());
-        environment.put("PREFIX", meta.getString("androidPrefix"));
-        environment.put("XDG_CONFIG_HOME", new File(home, ".config").getAbsolutePath());
-        environment.put("XDG_DATA_HOME", new File(home, ".local/share").getAbsolutePath());
-        environment.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
-        environment.put("TMPDIR", temp.getAbsolutePath());
-        environment.put("TMP", temp.getAbsolutePath());
-        environment.put("TEMP", temp.getAbsolutePath());
-        environment.put("SHELL", "/system/bin/sh");
-        environment.put("TERM", "xterm-256color");
-        environment.put("PATH", "/system/bin:/system/xbin:/product/bin:/apex/com.android.runtime/bin");
-        environment.put("SSL_CERT_FILE", certificates.getAbsolutePath());
-        environment.put("BUN_PTY_LIB", shim.getAbsolutePath());
-        environment.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
-        environment.put("LD_LIBRARY_PATH", runtime.getAbsolutePath());
-        environment.remove("LD_PRELOAD");
-        GitRuntime.applyEnvironment(builder, context);
+        configureEnvironment(builder, meta, files, home, workspace, temp);
 
         Process started = builder.start();
 

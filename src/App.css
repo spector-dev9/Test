@@ -6770,3 +6770,16 @@ html[data-reduce-motion="true"] *::after {
     order: 4;
   }
 }
+
+.session-transfer-select {
+  width: 100%;
+  min-height: 36px;
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: #e7e7ee;
+  background: #17171c;
+  font-family: inherit;
+  font-size: 12px;
+}

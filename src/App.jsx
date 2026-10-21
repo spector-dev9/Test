@@ -1012,6 +1012,9 @@ export default function App() {
                 onProvidersChanged={resources.refresh}
                 uiPrefs={uiPrefs}
                 onChangeUiPref={handleChangeUiPref}
+                sessions={sessions}
+                selectedSessionId={activeSessionId}
+                onSessionsRefreshed={overview.refresh}
               />
             ) : null}
           </div>

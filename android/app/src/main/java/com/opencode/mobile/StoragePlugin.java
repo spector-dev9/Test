@@ -5,14 +5,17 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 
 import androidx.activity.result.ActivityResult;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -148,6 +151,124 @@ public class StoragePlugin extends Plugin {
         selection.put("name", directory.getName().isEmpty() ? path : directory.getName());
         selection.put("uri", treeUri.toString());
         call.resolve(selection);
+    }
+
+    @PluginMethod
+    public void pickDocument(PluginCall call) {
+        String[] mimeTypes = mimeTypesFrom(call.getArray("mimeTypes"));
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        try {
+            startActivityForResult(call, intent, "pickDocumentCallback");
+        } catch (ActivityNotFoundException failure) {
+            call.reject("No file picker is available on this device.");
+        }
+    }
+
+    @PluginMethod
+    public void createDocument(PluginCall call) {
+        String name = call.getString("name");
+        if (name == null || name.trim().isEmpty()) {
+            name = "session.json";
+        }
+        String mime = call.getString("mime");
+        if (mime == null || mime.trim().isEmpty()) {
+            mime = "application/json";
+        }
+
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mime);
+        intent.putExtra(Intent.EXTRA_TITLE, name);
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        );
+
+        try {
+            startActivityForResult(call, intent, "createDocumentCallback");
+        } catch (ActivityNotFoundException failure) {
+            call.reject("No file saver is available on this device.");
+        }
+    }
+
+    @ActivityCallback
+    private void pickDocumentCallback(PluginCall call, ActivityResult result) {
+        resolveDocument(call, result, false);
+    }
+
+    @ActivityCallback
+    private void createDocumentCallback(PluginCall call, ActivityResult result) {
+        resolveDocument(call, result, true);
+    }
+
+    private void resolveDocument(PluginCall call, ActivityResult result, boolean write) {
+        if (call == null) return;
+
+        Uri uri = result.getData() == null ? null : result.getData().getData();
+        if (result.getResultCode() != Activity.RESULT_OK || uri == null) {
+            JSObject cancelled = new JSObject();
+            cancelled.put("cancelled", true);
+            call.resolve(cancelled);
+            return;
+        }
+
+        JSObject document = new JSObject();
+        document.put("cancelled", false);
+        document.put("uri", uri.toString());
+        String name = displayName(uri);
+        if (name != null && !name.trim().isEmpty()) {
+            document.put("name", name);
+        } else if (write) {
+            document.put("name", "session.json");
+        }
+        call.resolve(document);
+    }
+
+    private String[] mimeTypesFrom(JSArray requested) {
+        String[] fallback = { "application/json", "text/json", "*/*" };
+        if (requested == null || requested.length() == 0) return fallback;
+
+        try {
+            if (requested.length() == 1) {
+                String only = requested.getString(0);
+                if (only != null && !only.trim().isEmpty()) return new String[] { only };
+            }
+            java.util.List<String> values = new java.util.ArrayList<>();
+            for (int index = 0; index < requested.length(); index++) {
+                String value = requested.getString(index);
+                if (value != null && !value.trim().isEmpty() && !values.contains(value)) {
+                    values.add(value);
+                }
+            }
+            if (!values.isEmpty()) return values.toArray(new String[0]);
+        } catch (Exception ignored) {
+            // Fall through to the default JSON filter.
+        }
+        return fallback;
+    }
+
+    private String displayName(Uri uri) {
+        try (
+            Cursor cursor = getContext().getContentResolver().query(
+                uri,
+                new String[] { OpenableColumns.DISPLAY_NAME },
+                null,
+                null,
+                null
+            )
+        ) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) return cursor.getString(index);
+            }
+        } catch (Exception ignored) {
+            // Display name is optional.
+        }
+        return null;
     }
 
     private JSObject statusObject() {

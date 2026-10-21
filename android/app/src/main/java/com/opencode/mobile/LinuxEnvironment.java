@@ -511,16 +511,34 @@ public class LinuxEnvironment extends Plugin {
         if (directory.isDirectory()) {
             return;
         }
+        // A leftover file or dangling symlink from an earlier partial
+        // extraction would make mkdir fail forever; remove it and retry.
+        directory.delete();
         if (!directory.mkdirs() && !directory.isDirectory()) {
             throw new IOException("Could not create " + directory.getAbsolutePath() + ".");
         }
     }
 
     private static void deleteRecursively(File file) {
-        if (file == null || !file.exists()) {
-            return;
+        if (file == null) return;
+
+        // File.exists() follows symlinks, so a dangling link would be invisible
+        // and survive deletion, blocking the next extraction (EEXIST). Detect
+        // links by comparing the resolved path with the expected child of the
+        // resolved parent, and never recurse through them.
+        boolean link = false;
+        try {
+            File parent = file.getParentFile();
+            if (parent != null) {
+                link = !file.getCanonicalPath().equals(
+                    new File(parent.getCanonicalPath(), file.getName()).getPath()
+                );
+            }
+        } catch (IOException failure) {
+            link = true;
         }
-        if (file.isDirectory()) {
+
+        if (!link && file.isDirectory()) {
             File[] children = file.listFiles();
             if (children != null) {
                 for (File child : children) {

@@ -1,5 +1,7 @@
 package com.opencode.mobile;
 
+import android.net.Uri;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -54,6 +56,50 @@ public class LocalServerPlugin extends Plugin {
     @PluginMethod
     public void logs(PluginCall call) {
         call.resolve(new JSObject().put("logs", manager.logs()));
+    }
+
+    @PluginMethod
+    public void exportSession(PluginCall call) {
+        String sessionID = call.getString("sessionID");
+        String uri = call.getString("uri");
+        if (sessionID == null || sessionID.trim().isEmpty()) {
+            call.reject("A session to export is required.");
+            return;
+        }
+        if (uri == null || uri.trim().isEmpty()) {
+            call.reject("A destination file is required.");
+            return;
+        }
+        manager.exportSession(sessionID, Uri.parse(uri), (bytes, output, error) ->
+            resolveTransfer(call, bytes, output, error)
+        );
+    }
+
+    @PluginMethod
+    public void importSession(PluginCall call) {
+        String uri = call.getString("uri");
+        if (uri == null || uri.trim().isEmpty()) {
+            call.reject("A session file is required.");
+            return;
+        }
+        manager.importSession(Uri.parse(uri), (bytes, output, error) ->
+            resolveTransfer(call, bytes, output, error)
+        );
+    }
+
+    private void resolveTransfer(PluginCall call, long bytes, String output, String error) {
+        if (getBridge() == null) return;
+
+        getBridge().executeOnMainThread(() -> {
+            if (error != null) {
+                call.reject(error);
+            } else {
+                JSObject result = new JSObject();
+                result.put("bytes", bytes);
+                result.put("output", output == null ? "" : output);
+                call.resolve(result);
+            }
+        });
     }
 
     private void emit(LocalServerManager.Snapshot snapshot) {
