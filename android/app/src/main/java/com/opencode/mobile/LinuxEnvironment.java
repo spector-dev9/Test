@@ -185,24 +185,44 @@ public class LinuxEnvironment extends Plugin {
         File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.tar.gz");
         download(ALPINE_ROOTFS_URL, archive, "rootfs archive");
 
-        File staging = new File(getContext().getFilesDir(), "linux-staging");
-        deleteRecursively(staging);
-        staging.mkdirs();
+        // Extract into a fresh directory every time. Reusing one name means a
+        // leftover entry from a killed extraction (which the app may no longer
+        // be able to remove) would make every later attempt fail at the same path.
+        File staging = new File(
+            getContext().getFilesDir(), "linux-staging-" + System.currentTimeMillis());
+        cleanupStaleStaging();
+        mkdirs(staging);
 
-        extract(archive, staging);
+        try {
+            extract(archive, staging);
 
-        File sh = new File(staging, "bin/sh");
-        if (!sh.isFile()) {
-            throw new IOException("The rootfs archive does not contain /bin/sh.");
-        }
+            File sh = new File(staging, "bin/sh");
+            if (!sh.isFile()) {
+                throw new IOException("The rootfs archive does not contain /bin/sh.");
+            }
 
-        deleteRecursively(rootfs);
-        if (!staging.renameTo(rootfs)) {
-            throw new IOException("The Linux rootfs could not be activated.");
+            deleteRecursively(rootfs);
+            if (!staging.renameTo(rootfs)) {
+                throw new IOException("The Linux rootfs could not be activated.");
+            }
+        } finally {
+            deleteRecursively(staging);
         }
         archive.delete();
         writeResolv(rootfs);
         return rootfs;
+    }
+
+    private void cleanupStaleStaging() {
+        File[] entries = getContext().getFilesDir().listFiles();
+        if (entries == null) {
+            return;
+        }
+        for (File entry : entries) {
+            if (entry.getName().startsWith("linux-staging")) {
+                deleteRecursively(entry);
+            }
+        }
     }
 
     private void ensureProot() throws Exception {
@@ -360,7 +380,18 @@ public class LinuxEnvironment extends Plugin {
                     throw new IOException("The rootfs archive escapes its directory: " + name);
                 }
                 if (entry.isDirectory()) {
-                    mkdirs(output);
+                    try {
+                        mkdirs(output);
+                    } catch (IOException failure) {
+                        if (isBindMountedDir(output)) {
+                            // proot bind-mounts /dev, /sys and /proc from the
+                            // host, so an uncreatable copy is not fatal.
+                            Log.w(TAG, "Skipping bind-mounted directory " + name + ": "
+                                + failure.getMessage());
+                            continue;
+                        }
+                        throw failure;
+                    }
                     applyMode(output, entry);
                     continue;
                 }
@@ -397,6 +428,11 @@ public class LinuxEnvironment extends Plugin {
      */
     private void applyMode(File target, TarArchiveEntry entry) {
         int mode = entry.getMode() & 0x7777;
+        if (target.isDirectory()) {
+            // Extraction must be able to populate subdirectories even if the
+            // archive mode is read-only for the owner.
+            mode |= 0700;
+        }
         try {
             Os.chmod(target.getAbsolutePath(), mode);
         } catch (Exception ignored) {
@@ -407,6 +443,11 @@ public class LinuxEnvironment extends Plugin {
                 target.setReadable(true, false);
             }
         }
+    }
+
+    private static boolean isBindMountedDir(File directory) {
+        String name = directory.getName();
+        return "dev".equals(name) || "proc".equals(name) || "sys".equals(name);
     }
 
     private void writeSymlink(String target, File link) throws IOException {
@@ -514,9 +555,26 @@ public class LinuxEnvironment extends Plugin {
         // A leftover file or dangling symlink from an earlier partial
         // extraction would make mkdir fail forever; remove it and retry.
         directory.delete();
-        if (!directory.mkdirs() && !directory.isDirectory()) {
-            throw new IOException("Could not create " + directory.getAbsolutePath() + ".");
+        if (directory.mkdirs() || directory.isDirectory()) {
+            return;
         }
+
+        // Surface the real cause (EEXIST leftover, EACCES, ENOSPC, EIO...)
+        // instead of a generic message.
+        String cause;
+        try {
+            Os.mkdir(directory.getAbsolutePath(), 0777);
+            if (directory.isDirectory()) {
+                return;
+            }
+            cause = "the directory still does not exist after mkdir";
+        } catch (ErrnoException failure) {
+            cause = failure.getMessage();
+        }
+        File parent = directory.getParentFile();
+        throw new IOException(
+            "Could not create " + directory.getAbsolutePath() + ": " + cause
+                + (parent != null && !parent.canWrite() ? " (its parent is not writable)" : ""));
     }
 
     private static void deleteRecursively(File file) {
