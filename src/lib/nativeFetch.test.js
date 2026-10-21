@@ -342,6 +342,16 @@ function permissionReplyUrl(requestID = "perm_1") {
   return url.href;
 }
 
+function questionUrl(path = "/question") {
+  const url = new URL(path, "http://127.0.0.1:4097");
+  url.searchParams.set("directory", PROJECT_DIRECTORY);
+  return url.href;
+}
+
+function todoUrl(sessionID = "ses_test123") {
+  return questionUrl(`/session/${sessionID}/todo`);
+}
+
 test("allows validated session create, prompt, command, and abort writes", async () => {
   const createHttpClient = createHttp({
     status: 200,
@@ -656,6 +666,78 @@ test("rejects invalid session updates and permission replies", async () => {
     {
       url: `${sessionResourceUrl()}?extra=1`,
       init: jsonRequest({ time: { archived: 1 } }, "PATCH"),
+    },
+  ];
+
+  for (const item of cases) {
+    const http = createHttp();
+    await assert.rejects(
+      createNativeFetch(http)(item.url, item.init),
+      TypeError,
+    );
+    assert.equal(http.calls.length, 0);
+  }
+});
+
+test("allows question and todo reads and writes", async () => {
+  const readHttp = createHttp({
+    status: 200,
+    data: "[]",
+    headers: { "content-type": "application/json" },
+  });
+  const nativeFetch = createNativeFetch(readHttp);
+
+  await nativeFetch(questionUrl());
+  await nativeFetch(todoUrl());
+  assert.deepEqual(
+    readHttp.calls.map((call) => new URL(call.url).pathname),
+    ["/question", "/session/ses_test123/todo"],
+  );
+
+  const replyHttp = createHttp({ status: 200, data: true, headers: {} });
+  await createNativeFetch(replyHttp)(
+    questionUrl("/question/que_123/reply"),
+    jsonRequest({ answers: [["Use the existing API"], ["Yes", "Add tests"]] }),
+  );
+  assert.deepEqual(replyHttp.calls[0].data, {
+    answers: [["Use the existing API"], ["Yes", "Add tests"]],
+  });
+
+  const rejectHttp = createHttp({ status: 200, data: true, headers: {} });
+  await createNativeFetch(rejectHttp)(
+    questionUrl("/question/que_123/reject"),
+    { method: "POST" },
+  );
+  assert.equal(rejectHttp.calls[0].method, "POST");
+});
+
+test("rejects invalid question and todo requests", async () => {
+  const cases = [
+    {
+      url: questionUrl("/question/que_123/reply"),
+      init: jsonRequest({ answers: [] }),
+    },
+    {
+      url: questionUrl("/question/que_123/reply"),
+      init: jsonRequest({ answers: [[]] }),
+    },
+    {
+      url: questionUrl("/question/que_123/reply"),
+      init: jsonRequest({ answers: [[""]], extra: true }),
+    },
+    {
+      url: questionUrl("/question/que_123/reply"),
+      init: jsonRequest({ answers: [["x".repeat(501)]] }),
+    },
+    {
+      url: questionUrl("/question/bad/reply"),
+      init: jsonRequest({ answers: [["ok"]] }),
+    },
+    {
+      url: `${questionUrl()}&extra=1`,
+    },
+    {
+      url: `${todoUrl()}?limit=1`,
     },
   ];
 
@@ -1151,6 +1233,12 @@ test("accepts the real SDK phase 2 request shapes", async () => {
         data = true;
       } else if (path.startsWith("/permission/")) {
         data = true;
+      } else if (path === "/question") {
+        data = [];
+      } else if (path.startsWith("/question/")) {
+        data = true;
+      } else if (path.endsWith("/todo")) {
+        data = [];
       }
 
       return {
@@ -1231,6 +1319,20 @@ test("accepts the real SDK phase 2 request shapes", async () => {
     directory: PROJECT_DIRECTORY,
     reply: "once",
   });
+  await client.question.list({ directory: PROJECT_DIRECTORY });
+  await client.question.reply({
+    requestID: "que_123",
+    directory: PROJECT_DIRECTORY,
+    answers: [["Yes"]],
+  });
+  await client.question.reject({
+    requestID: "que_123",
+    directory: PROJECT_DIRECTORY,
+  });
+  await client.session.todo({
+    sessionID,
+    directory: PROJECT_DIRECTORY,
+  });
   await client.session.delete({ sessionID, directory: PROJECT_DIRECTORY });
 
   assert.deepEqual(
@@ -1252,6 +1354,10 @@ test("accepts the real SDK phase 2 request shapes", async () => {
       `PATCH /session/${sessionID}`,
       "GET /permission",
       "POST /permission/perm_1/reply",
+      "GET /question",
+      "POST /question/que_123/reply",
+      "POST /question/que_123/reject",
+      `GET /session/${sessionID}/todo`,
       `DELETE /session/${sessionID}`,
     ],
   );

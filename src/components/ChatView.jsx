@@ -24,6 +24,8 @@ import {
 import { ConnectionBanner } from "./ConnectionBanner";
 import { MessageList } from "./MessageList";
 import { PermissionPrompts } from "./PermissionPrompts";
+import { QuestionPrompts } from "./QuestionPrompts";
+import { TodoDialog } from "./TodoDialog";
 
 const SUGGESTIONS = [
   "Explain this project and its main entry points.",
@@ -119,6 +121,13 @@ export function ChatView({
   permissionError,
   replyingPermissionId,
   onPermissionReply,
+  questions,
+  questionError,
+  answeringQuestionId,
+  onQuestionReply,
+  onQuestionReject,
+  todos,
+  todoError,
   onSend,
   onRetrySend,
   onStop,
@@ -142,6 +151,7 @@ export function ChatView({
   const [showLatest, setShowLatest] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState("");
+  const [todosOpen, setTodosOpen] = useState(false);
 
   const rows = useMemo(
     () => normalizeConversation(messages.data),
@@ -162,11 +172,13 @@ export function ChatView({
     phase === "working" ||
     phase === "stopping";
   const permissionPending = permissions.length > 0;
+  const questionPending = questions.length > 0;
   const canSubmit =
     connected &&
     Boolean(session) &&
     phase === "idle" &&
     !permissionPending &&
+    !questionPending &&
     (draft.trim().length > 0 || attachments.length > 0);
   const showEmptyConversation =
     messages.status === "ready" &&
@@ -191,6 +203,7 @@ export function ChatView({
       onDraftChange("");
       setAttachments([]);
       setAttachmentError("");
+      setTodosOpen(false);
     }
     previousSessionRef.current = session?.id ?? null;
     stickToBottomRef.current = true;
@@ -207,7 +220,14 @@ export function ChatView({
   useEffect(() => {
     if (!stickToBottomRef.current) return;
     scrollToLatest("auto");
-  }, [rows, phase, actionError, permissionPending, scrollToLatest]);
+  }, [
+    rows,
+    phase,
+    actionError,
+    permissionPending,
+    questionPending,
+    scrollToLatest,
+  ]);
 
   useEffect(() => {
     function handleViewportChange() {
@@ -387,14 +407,27 @@ export function ChatView({
                 : "Your coding agent, in a workspace of your own."}
             </p>
           </div>
-          <button
-            type="button"
-            className="model-pill model-button"
-            onClick={onOpenModels}
-            title="Choose a model for new messages"
-          >
-            ◈ {modelLabel}
-          </button>
+          <div className="chat-heading-actions">
+            {session && todos.length > 0 ? (
+              <button
+                type="button"
+                className="model-pill todo-trigger"
+                onClick={() => setTodosOpen(true)}
+                title="Open the session todo list"
+              >
+                ☑ {todos.filter((todo) => todo.status === "completed").length}/
+                {todos.length}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="model-pill model-button"
+              onClick={onOpenModels}
+              title="Choose a model for new messages"
+            >
+              ◈ {modelLabel}
+            </button>
+          </div>
         </div>
 
         <ConnectionBanner
@@ -529,6 +562,15 @@ export function ChatView({
           error={permissionError}
         />
 
+        <QuestionPrompts
+          key={questions[0]?.id ?? "no-question"}
+          questions={questions}
+          onReply={onQuestionReply}
+          onReject={onQuestionReject}
+          busyId={answeringQuestionId}
+          error={questionError}
+        />
+
         {actionError ? (
           <div className="action-error" role="alert">
             <span>{actionError.message}</span>
@@ -614,13 +656,17 @@ export function ChatView({
             onFocus={handleComposerFocus}
             rows={1}
             maxLength={MAX_COMPOSER_CHARS}
-            disabled={!connected || !session || permissionPending}
+            disabled={
+              !connected || !session || permissionPending || questionPending
+            }
             placeholder={
               connected
                 ? session
                   ? permissionPending
                     ? "Respond to the permission request above"
-                    : "Ask OpenCode to inspect, explain, or change this project…"
+                    : questionPending
+                      ? "Answer the question to continue"
+                      : "Ask OpenCode to inspect, explain, or change this project…"
                   : "Create a session to start"
                 : "Reconnect to the local OpenCode server"
             }
@@ -637,6 +683,7 @@ export function ChatView({
                   !connected ||
                   creatingSession ||
                   permissionPending ||
+                  questionPending ||
                   phase !== "idle" ||
                   attachments.length >= MAX_PROMPT_ATTACHMENTS
                 }
@@ -663,7 +710,9 @@ export function ChatView({
                     ? "Create a session to start"
                     : permissionPending
                       ? "Permission required · review the prompt above"
-                      : phase === "sending"
+                      : questionPending
+                        ? "Question pending · answer above to continue"
+                        : phase === "sending"
                         ? "Sending prompt…"
                         : phase === "working"
                           ? "Agent working · you can stop it"
@@ -705,6 +754,13 @@ export function ChatView({
           Review agent actions before allowing changes to your files.
         </p>
       </div>
+
+      <TodoDialog
+        open={todosOpen}
+        todos={todos}
+        error={todoError}
+        onClose={() => setTodosOpen(false)}
+      />
     </div>
   );
 }

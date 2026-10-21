@@ -38,6 +38,7 @@ import {
 export { PROJECT_DIRECTORY };
 
 const SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]+$/;
+const QUESTION_ID_PATTERN = /^que_[A-Za-z0-9]+$/;
 const PERMISSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const MODEL_VARIANT_PATTERN = /^[A-Za-z0-9._:-]{1,40}$/;
@@ -46,8 +47,20 @@ const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
 const MAX_SESSION_TITLE_CHARS = 120;
 const MAX_PERMISSION_MESSAGE_CHARS = 2000;
+const MAX_QUESTION_HEADER_CHARS = 120;
+const MAX_QUESTION_TEXT_CHARS = 4000;
+const MAX_QUESTION_OPTION_CHARS = 500;
+const MAX_QUESTION_DESCRIPTION_CHARS = 1000;
+const MAX_QUESTION_ANSWERS = 20;
 const MESSAGE_PAGE_LIMIT = 200;
 const PERMISSION_REPLIES = ["once", "always", "reject"];
+const TODO_STATUSES = new Set([
+  "pending",
+  "in_progress",
+  "completed",
+  "cancelled",
+]);
+const TODO_PRIORITIES = new Set(["high", "medium", "low"]);
 
 const configuredBaseUrl = import.meta.env?.VITE_OPENCODE_URL;
 export const OPENCODE_BASE_URL = (
@@ -223,6 +236,137 @@ function validatePermissionReply(reply, message) {
 
   const trimmed = message.trim();
   return trimmed ? { reply, message: trimmed } : { reply };
+}
+
+function validateQuestionId(requestID) {
+  if (
+    typeof requestID !== "string" ||
+    !QUESTION_ID_PATTERN.test(requestID)
+  ) {
+    throw invalidInput("The question request identifier is invalid.");
+  }
+
+  return requestID;
+}
+
+function validateQuestionAnswers(answers) {
+  if (
+    !Array.isArray(answers) ||
+    answers.length === 0 ||
+    answers.length > MAX_QUESTION_ANSWERS
+  ) {
+    throw invalidInput("The question answers are invalid.");
+  }
+
+  return answers.map((answer) => {
+    if (
+      !Array.isArray(answer) ||
+      answer.length === 0 ||
+      answer.length > MAX_QUESTION_ANSWERS
+    ) {
+      throw invalidInput("The question answers are invalid.");
+    }
+
+    return answer.map((label) => {
+      if (
+        typeof label !== "string" ||
+        !label.trim() ||
+        label.length > MAX_QUESTION_OPTION_CHARS ||
+        label.includes("\0")
+      ) {
+        throw invalidInput("The question answers are invalid.");
+      }
+
+      return label.trim();
+    });
+  });
+}
+
+function normalizeQuestionOption(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.label !== "string" ||
+    !data.label.trim() ||
+    data.label.length > MAX_QUESTION_OPTION_CHARS
+  ) {
+    throw unexpectedResponse();
+  }
+
+  return {
+    label: data.label.trim(),
+    description:
+      typeof data.description === "string"
+        ? data.description.trim().slice(0, MAX_QUESTION_DESCRIPTION_CHARS)
+        : "",
+  };
+}
+
+function normalizeQuestion(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.id !== "string" ||
+    !QUESTION_ID_PATTERN.test(data.id) ||
+    typeof data.sessionID !== "string" ||
+    !SESSION_ID_PATTERN.test(data.sessionID) ||
+    !Array.isArray(data.questions) ||
+    data.questions.length === 0 ||
+    data.questions.length > MAX_QUESTION_ANSWERS
+  ) {
+    throw unexpectedResponse();
+  }
+
+  const questions = data.questions.map((question) => {
+    if (
+      !question ||
+      typeof question !== "object" ||
+      typeof question.question !== "string" ||
+      !question.question.trim() ||
+      question.question.length > MAX_QUESTION_TEXT_CHARS ||
+      typeof question.header !== "string" ||
+      !question.header.trim() ||
+      question.header.length > MAX_QUESTION_HEADER_CHARS ||
+      !Array.isArray(question.options) ||
+      question.options.length > MAX_QUESTION_ANSWERS
+    ) {
+      throw unexpectedResponse();
+    }
+
+    return {
+      question: question.question.trim(),
+      header: question.header.trim(),
+      options: question.options.map(normalizeQuestionOption),
+      multiple: question.multiple === true,
+      custom: question.custom === true,
+    };
+  });
+
+  return {
+    id: data.id,
+    sessionID: data.sessionID,
+    questions,
+  };
+}
+
+function normalizeTodo(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.content !== "string" ||
+    !data.content.trim() ||
+    data.content.length > MAX_QUESTION_TEXT_CHARS ||
+    !TODO_STATUSES.has(data.status) ||
+    !TODO_PRIORITIES.has(data.priority)
+  ) {
+    throw unexpectedResponse();
+  }
+
+  return {
+    content: data.content.trim(),
+    status: data.status,
+    priority: data.priority,
+  };
 }
 
 function normalizeProject(data) {
@@ -642,6 +786,94 @@ export function createOpenCodeApi(client = opencode) {
         "The permission response could not be sent.",
         signal,
       );
+    },
+
+    async listQuestions(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.question.list(
+            { directory: scope },
+            { signal: requestSignal },
+          ),
+        "Questions could not be loaded.",
+        signal,
+      );
+
+      return requireArray(data).flatMap((row) => {
+        try {
+          return [normalizeQuestion(row)];
+        } catch {
+          return [];
+        }
+      });
+    },
+
+    async replyQuestion(directory, requestID, answers, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateQuestionId(requestID);
+      const normalized = validateQuestionAnswers(answers);
+
+      return runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.question.reply(
+            {
+              requestID: id,
+              directory: scope,
+              answers: normalized,
+            },
+            { signal: requestSignal },
+          ),
+        "The question response could not be sent.",
+        signal,
+      );
+    },
+
+    async rejectQuestion(directory, requestID, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateQuestionId(requestID);
+
+      return runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.question.reject(
+            {
+              requestID: id,
+              directory: scope,
+            },
+            { signal: requestSignal },
+          ),
+        "The question could not be rejected.",
+        signal,
+      );
+    },
+
+    async listSessionTodos(directory, sessionID, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.todo(
+            {
+              sessionID: id,
+              directory: scope,
+            },
+            { signal: requestSignal },
+          ),
+        "The todo list could not be loaded.",
+        signal,
+      );
+
+      return requireArray(data).flatMap((row) => {
+        try {
+          return [normalizeTodo(row)];
+        } catch {
+          return [];
+        }
+      });
     },
 
     async listSessionMessages(directory, sessionID, signal) {
@@ -1236,6 +1468,18 @@ export const listPermissions = (directory, signal) =>
 
 export const replyPermission = (directory, requestID, options, signal) =>
   opencodeApi.replyPermission(directory, requestID, options, signal);
+
+export const listQuestions = (directory, signal) =>
+  opencodeApi.listQuestions(directory, signal);
+
+export const replyQuestion = (directory, requestID, answers, signal) =>
+  opencodeApi.replyQuestion(directory, requestID, answers, signal);
+
+export const rejectQuestion = (directory, requestID, signal) =>
+  opencodeApi.rejectQuestion(directory, requestID, signal);
+
+export const listSessionTodos = (directory, sessionID, signal) =>
+  opencodeApi.listSessionTodos(directory, sessionID, signal);
 
 export const listSessionMessages = (directory, sessionID, signal) =>
   opencodeApi.listSessionMessages(directory, sessionID, signal);

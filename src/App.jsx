@@ -740,6 +740,13 @@ export default function App() {
                 permissionError={conversation.permissionError}
                 replyingPermissionId={conversation.replyingPermissionId}
                 onPermissionReply={conversation.respondToPermission}
+                questions={conversation.questions}
+                questionError={conversation.questionError}
+                answeringQuestionId={conversation.answeringQuestionId}
+                onQuestionReply={conversation.respondToQuestion}
+                onQuestionReject={conversation.rejectQuestion}
+                todos={conversation.todos}
+                todoError={conversation.todoError}
                 onSend={conversation.submit}
                 onRetrySend={conversation.retryLast}
                 onStop={conversation.stop}

@@ -4,8 +4,12 @@ import {
   abortSession,
   getSessionStatuses,
   listPermissions,
+  listQuestions,
   listSessionMessages,
+  listSessionTodos,
+  rejectQuestion as rejectQuestionRequest,
   replyPermission,
+  replyQuestion,
   sendCommand,
   sendPromptAsync,
 } from "../lib/opencode";
@@ -65,14 +69,40 @@ function permissionsForSession(rows, sessionID) {
   return rows.filter((request) => request?.sessionID === sessionID);
 }
 
-async function loadSnapshot(directory, sessionID, signal) {
-  const [messages, statuses, permissions] = await Promise.allSettled([
-    listSessionMessages(directory, sessionID, signal),
-    getSessionStatuses(directory, signal),
-    listPermissions(directory, signal),
-  ]);
+function questionsForSession(rows, sessionID) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((request) => request?.sessionID === sessionID);
+}
 
-  return { messages, statuses, permissions };
+async function loadSnapshot(directory, sessionID, signal) {
+  const [messages, statuses, permissions, questions, todos] =
+    await Promise.allSettled([
+      listSessionMessages(directory, sessionID, signal),
+      getSessionStatuses(directory, signal),
+      listPermissions(directory, signal),
+      listQuestions(directory, signal),
+      listSessionTodos(directory, sessionID, signal),
+    ]);
+
+  return { messages, statuses, permissions, questions, todos };
+}
+
+function applyQuestionResult(result, sessionID, setQuestions, setError) {
+  if (result.questions.status === "fulfilled") {
+    setQuestions(questionsForSession(result.questions.value, sessionID));
+    setError(null);
+  } else {
+    setError("Questions could not be loaded.");
+  }
+}
+
+function applyTodoResult(result, setTodos, setError) {
+  if (result.todos.status === "fulfilled") {
+    setTodos(result.todos.value);
+    setError(null);
+  } else {
+    setError("The todo list could not be loaded.");
+  }
 }
 
 export function useSessionConversation({
@@ -88,6 +118,11 @@ export function useSessionConversation({
   const [permissions, setPermissions] = useState([]);
   const [permissionError, setPermissionError] = useState(null);
   const [replyingPermissionId, setReplyingPermissionId] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [questionError, setQuestionError] = useState(null);
+  const [answeringQuestionId, setAnsweringQuestionId] = useState(null);
+  const [todos, setTodos] = useState([]);
+  const [todoError, setTodoError] = useState(null);
   const phaseRef = useRef("idle");
   const epochRef = useRef(0);
   const messageRequestRef = useRef(0);
@@ -132,11 +167,16 @@ export function useSessionConversation({
       setLastSubmission(null);
       setPermissionError(null);
       setReplyingPermissionId(null);
+      setQuestionError(null);
+      setAnsweringQuestionId(null);
+      setTodoError(null);
       submittedAtRef.current = 0;
 
       if (!sessionId || !directory) {
         setMessages(initialMessages);
         setPermissions([]);
+        setQuestions([]);
+        setTodos([]);
         return;
       }
 
@@ -144,6 +184,8 @@ export function useSessionConversation({
         if (connectionChanged) {
           setMessages(initialMessages);
           setPermissions([]);
+          setQuestions([]);
+          setTodos([]);
         }
         return;
       }
@@ -203,6 +245,14 @@ export function useSessionConversation({
           permissionsForSession(result.permissions.value, sessionId),
         );
       }
+
+      applyQuestionResult(
+        result,
+        sessionId,
+        setQuestions,
+        setQuestionError,
+      );
+      applyTodoResult(result, setTodos, setTodoError);
     }
 
     load();
@@ -263,6 +313,14 @@ export function useSessionConversation({
             permissionsForSession(result.permissions.value, sessionId),
           );
         }
+
+        applyQuestionResult(
+          result,
+          sessionId,
+          setQuestions,
+          setQuestionError,
+        );
+        applyTodoResult(result, setTodos, setTodoError);
 
         if (result.statuses.status === "fulfilled") {
           failures = 0;
@@ -371,6 +429,14 @@ export function useSessionConversation({
         permissionsForSession(result.permissions.value, sessionId),
       );
     }
+
+    applyQuestionResult(
+      result,
+      sessionId,
+      setQuestions,
+      setQuestionError,
+    );
+    applyTodoResult(result, setTodos, setTodoError);
 
     if (result.statuses.status === "fulfilled") {
       if (statusIsBusy(result.statuses.value[sessionId])) {
@@ -484,6 +550,14 @@ export function useSessionConversation({
         );
       }
 
+      applyQuestionResult(
+        result,
+        sessionId,
+        setQuestions,
+        setQuestionError,
+      );
+      applyTodoResult(result, setTodos, setTodoError);
+
       if (
         result.statuses.status === "fulfilled" &&
         statusIsBusy(result.statuses.value[sessionId])
@@ -559,6 +633,118 @@ export function useSessionConversation({
     [directory, enabled, sessionId, setPhaseSafe],
   );
 
+  const respondToQuestion = useCallback(
+    async (requestID, answers) => {
+      if (!directory || !sessionId || !enabled) return false;
+
+      setQuestionError(null);
+      setAnsweringQuestionId(requestID);
+
+      try {
+        await replyQuestion(directory, requestID, answers);
+
+        const result = await loadSnapshot(directory, sessionId);
+
+        if (result.messages.status === "fulfilled") {
+          setMessages({
+            status: "ready",
+            data: result.messages.value,
+            error: null,
+            errorKind: null,
+          });
+        }
+
+        applyQuestionResult(
+          result,
+          sessionId,
+          setQuestions,
+          setQuestionError,
+        );
+        setQuestions((previous) =>
+          previous.filter((question) => question.id !== requestID),
+        );
+        setQuestionError(null);
+        applyTodoResult(result, setTodos, setTodoError);
+
+        if (
+          result.statuses.status === "fulfilled" &&
+          statusIsBusy(result.statuses.value[sessionId])
+        ) {
+          setPhaseSafe("working");
+        }
+
+        refreshSessionsRef.current?.();
+        return true;
+      } catch (error) {
+        const failure = connectionFailure(
+          error,
+          "The question response could not be sent.",
+        );
+        setQuestionError(failure.message);
+        return false;
+      } finally {
+        setAnsweringQuestionId(null);
+      }
+    },
+    [directory, enabled, sessionId, setPhaseSafe],
+  );
+
+  const rejectQuestion = useCallback(
+    async (requestID) => {
+      if (!directory || !sessionId || !enabled) return false;
+
+      setQuestionError(null);
+      setAnsweringQuestionId(requestID);
+
+      try {
+        await rejectQuestionRequest(directory, requestID);
+
+        const result = await loadSnapshot(directory, sessionId);
+
+        if (result.messages.status === "fulfilled") {
+          setMessages({
+            status: "ready",
+            data: result.messages.value,
+            error: null,
+            errorKind: null,
+          });
+        }
+
+        applyQuestionResult(
+          result,
+          sessionId,
+          setQuestions,
+          setQuestionError,
+        );
+        setQuestions((previous) =>
+          previous.filter((question) => question.id !== requestID),
+        );
+        setQuestionError(null);
+        applyTodoResult(result, setTodos, setTodoError);
+
+        if (
+          result.statuses.status === "fulfilled" &&
+          statusIsBusy(result.statuses.value[sessionId])
+        ) {
+          setPhaseSafe("working");
+        }
+
+        refreshSessionsRef.current?.();
+        return true;
+      } catch (error) {
+        const failure = connectionFailure(
+          error,
+          "The question could not be rejected.",
+        );
+        setQuestionError(failure.message);
+        return false;
+      } finally {
+        setAnsweringQuestionId(null);
+      }
+    },
+    [directory, enabled, sessionId, setPhaseSafe],
+  );
+
   const clearActionError = useCallback(() => {
     setActionError(null);
   }, []);
@@ -571,11 +757,18 @@ export function useSessionConversation({
     permissions,
     permissionError,
     replyingPermissionId,
+    questions,
+    questionError,
+    answeringQuestionId,
+    todos,
+    todoError,
     refresh,
     submit,
     retryLast,
     stop,
     respondToPermission,
+    respondToQuestion,
+    rejectQuestion,
     clearActionError,
   };
 }

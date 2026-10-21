@@ -318,6 +318,7 @@ final class LocalServerManager {
             mkdirs(workspace);
             mkdirs(temp);
             writeResolver(files);
+            installCopilotRetryPlugin(home);
 
             ensureRuntime(meta, files);
             ensureYourCertificates(meta, files);
@@ -743,6 +744,24 @@ final class LocalServerManager {
         }
         writeText(destination, bundle.toString());
         makeReadable(destination);
+    }
+
+    private void installCopilotRetryPlugin(File home) {
+        File directory = new File(home, ".config/opencode/plugin");
+        File destination = new File(directory, "copilot-retry.js");
+
+        try {
+            mkdirs(directory);
+            try (
+                InputStream input = context.getAssets().open("copilot-retry.js");
+                OutputStream output = new FileOutputStream(destination)
+            ) {
+                copy(input, output);
+            }
+            makeReadable(destination);
+        } catch (IOException error) {
+            Log.w(TAG, "Could not install the Copilot retry plugin", error);
+        }
     }
 
     private void startServer(

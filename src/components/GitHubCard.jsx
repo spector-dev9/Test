@@ -119,11 +119,11 @@ export function GitHubCard({
         setAuthBusy(false);
       }
     } catch (failure) {
-      setProviders({
+      setProviders((current) => ({
         status: "error",
-        connected: false,
+        connected: current.connected,
         error: failure?.message || "GitHub sign-in status is unavailable.",
-      });
+      }));
     }
   }, [connected, directory, native, stopAuthAttempt]);
 
@@ -173,17 +173,37 @@ export function GitHubCard({
       })
       .catch((failure) => {
         if (cancelled) return;
-        setProviders({
+        setProviders((current) => ({
           status: "error",
-          connected: false,
+          connected: current.connected,
           error: failure?.message || "GitHub sign-in status is unavailable.",
-        });
+        }));
       });
 
     return () => {
       cancelled = true;
     };
   }, [connected, directory, native, stopAuthAttempt]);
+
+  useEffect(() => {
+    if (!native || !connected || !directory || authBusy || auth) {
+      return undefined;
+    }
+
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        refreshProviders();
+      }
+    }
+
+    const timer = window.setInterval(refreshProviders, 60 * 1000);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [auth, authBusy, connected, directory, native, refreshProviders]);
 
   useEffect(() => {
     if (!native || !directory) return undefined;

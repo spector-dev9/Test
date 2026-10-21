@@ -24,11 +24,14 @@ import {
 const HEALTH_PATH = "/global/health";
 const PROJECT_PATH = "/project";
 const PERMISSION_PATH = "/permission";
+const QUESTION_PATH = "/question";
 const SESSION_PATH = "/session";
 const SESSION_STATUS_PATH = "/session/status";
 const SESSION_ITEM_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/(message|prompt_async|command|shell|abort)$/;
+const SESSION_TODO_PATH = /^\/session\/(ses_[A-Za-z0-9]+)\/todo$/;
 const SESSION_RESOURCE_PATH = /^\/session\/(ses_[A-Za-z0-9]+)$/;
 const PERMISSION_REPLY_PATH = /^\/permission\/([A-Za-z0-9_-]{1,200})\/reply$/;
+const QUESTION_REPLY_PATH = /^\/question\/(que_[A-Za-z0-9]+)\/(reply|reject)$/;
 const PROVIDERS_PATH = "/config/providers";
 const PROVIDER_PATH = "/provider";
 const PROVIDER_AUTH_PATH = "/provider/auth";
@@ -52,6 +55,8 @@ const COMMAND_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_PROMPT_CHARS = 32000;
 const MAX_SESSION_TITLE_CHARS = 120;
 const MAX_PERMISSION_MESSAGE_CHARS = 2000;
+const MAX_QUESTION_ANSWER_CHARS = 500;
+const MAX_QUESTION_ANSWERS = 20;
 const MAX_FILE_SEARCH_CHARS = 200;
 const PERMISSION_REPLIES = ["once", "always", "reject"];
 
@@ -457,6 +462,39 @@ function validatePermissionReplyBody(body) {
   }
 }
 
+function validateQuestionReplyBody(body) {
+  exactKeys(body, ["answers"]);
+
+  if (
+    !Array.isArray(body.answers) ||
+    body.answers.length === 0 ||
+    body.answers.length > MAX_QUESTION_ANSWERS
+  ) {
+    throw invalidRequest("requires valid question answers.");
+  }
+
+  for (const answer of body.answers) {
+    if (
+      !Array.isArray(answer) ||
+      answer.length === 0 ||
+      answer.length > MAX_QUESTION_ANSWERS
+    ) {
+      throw invalidRequest("requires valid question answers.");
+    }
+
+    for (const label of answer) {
+      if (
+        typeof label !== "string" ||
+        !label.trim() ||
+        label.length > MAX_QUESTION_ANSWER_CHARS ||
+        label.includes("\0")
+      ) {
+        throw invalidRequest("requires valid question answers.");
+      }
+    }
+  }
+}
+
 async function requestBody(request, { allowEmpty = false } = {}) {
   const contentLength = Number(request.headers.get("content-length"));
   if (
@@ -505,6 +543,11 @@ function validateReadRequest(url) {
   }
 
   if (url.pathname === PERMISSION_PATH) {
+    requireProjectQuery(url);
+    return;
+  }
+
+  if (url.pathname === QUESTION_PATH) {
     requireProjectQuery(url);
     return;
   }
@@ -591,6 +634,11 @@ function validateReadRequest(url) {
     return;
   }
 
+  if (SESSION_TODO_PATH.test(url.pathname)) {
+    requireProjectQuery(url);
+    return;
+  }
+
   const match = SESSION_ITEM_PATH.exec(url.pathname);
   if (match) {
     if (match[2] !== "message") {
@@ -664,6 +712,22 @@ async function validateMutationRequest(request, url, method) {
   if (permissionMatch) {
     const data = await requestBody(request);
     validatePermissionReplyBody(data);
+    return { data };
+  }
+
+  const questionMatch = QUESTION_REPLY_PATH.exec(url.pathname);
+  if (questionMatch) {
+    if (method !== "POST") {
+      throw invalidRequest("rejected the request method.");
+    }
+
+    if (questionMatch[2] === "reject") {
+      await requestBody(request, { allowEmpty: true });
+      return {};
+    }
+
+    const data = await requestBody(request);
+    validateQuestionReplyBody(data);
     return { data };
   }
 

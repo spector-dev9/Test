@@ -256,6 +256,132 @@ test("loads and replies to scoped permission requests", async () => {
   );
 });
 
+test("loads, answers, and rejects scoped questions and todos", async () => {
+  const calls = [];
+  const api = createOpenCodeApi({
+    question: {
+      list: async (parameters) => {
+        calls.push(["list", parameters]);
+        return fulfilled([
+          {
+            id: "que_123",
+            sessionID: "ses_test123",
+            questions: [
+              {
+                question: "Which approach should I use?",
+                header: "Approach",
+                options: [
+                  { label: "Existing API", description: "Reuse the client." },
+                  { label: "New API", description: "Add a new endpoint." },
+                ],
+                multiple: false,
+                custom: true,
+              },
+            ],
+          },
+          {
+            id: "bad id",
+            sessionID: "ses_test123",
+            questions: [],
+          },
+        ]);
+      },
+      reply: async (parameters) => {
+        calls.push(["reply", parameters]);
+        return fulfilled(true);
+      },
+      reject: async (parameters) => {
+        calls.push(["reject", parameters]);
+        return fulfilled(true);
+      },
+    },
+    session: {
+      todo: async (parameters) => {
+        calls.push(["todo", parameters]);
+        return fulfilled([
+          {
+            content: "  Add tests  ",
+            status: "in_progress",
+            priority: "high",
+          },
+          { content: "", status: "pending", priority: "low" },
+        ]);
+      },
+    },
+  });
+
+  assert.deepEqual(await api.listQuestions(PROJECT_DIRECTORY), [
+    {
+      id: "que_123",
+      sessionID: "ses_test123",
+      questions: [
+        {
+          question: "Which approach should I use?",
+          header: "Approach",
+          options: [
+            { label: "Existing API", description: "Reuse the client." },
+            { label: "New API", description: "Add a new endpoint." },
+          ],
+          multiple: false,
+          custom: true,
+        },
+      ],
+    },
+  ]);
+
+  await api.replyQuestion(PROJECT_DIRECTORY, "que_123", [
+    ["Existing API"],
+    ["Yes", "Add tests"],
+  ]);
+  await api.rejectQuestion(PROJECT_DIRECTORY, "que_123");
+
+  assert.deepEqual(await api.listSessionTodos(
+    PROJECT_DIRECTORY,
+    "ses_test123",
+  ), [
+    {
+      content: "Add tests",
+      status: "in_progress",
+      priority: "high",
+    },
+  ]);
+
+  assert.deepEqual(calls, [
+    ["list", { directory: PROJECT_DIRECTORY }],
+    [
+      "reply",
+      {
+        requestID: "que_123",
+        directory: PROJECT_DIRECTORY,
+        answers: [["Existing API"], ["Yes", "Add tests"]],
+      },
+    ],
+    [
+      "reject",
+      {
+        requestID: "que_123",
+        directory: PROJECT_DIRECTORY,
+      },
+    ],
+    [
+      "todo",
+      {
+        sessionID: "ses_test123",
+        directory: PROJECT_DIRECTORY,
+      },
+    ],
+  ]);
+
+  await assert.rejects(
+    api.replyQuestion(PROJECT_DIRECTORY, "que_123", []),
+    /question answers are invalid/,
+  );
+  await assert.rejects(
+    api.rejectQuestion(PROJECT_DIRECTORY, "bad id"),
+    /question request identifier is invalid/,
+  );
+});
+
 test("creates project sessions with validated model and title", async () => {
   const calls = [];
   const api = createOpenCodeApi({
