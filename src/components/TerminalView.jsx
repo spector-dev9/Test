@@ -14,6 +14,7 @@ import {
 import { ptyWebSocketUrl, validateTerminalSize } from "../lib/pty";
 import { openPtySocket } from "../lib/ptySocket";
 import { projectLabel } from "../lib/project";
+import { copyText } from "../lib/clipboard";
 
 const RESIZE_DEBOUNCE_MS = 220;
 
@@ -59,6 +60,8 @@ export function TerminalView({ directory, connected, project, active }) {
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("connecting");
   const [error, setError] = useState(null);
+  const [terminalCopied, setTerminalCopied] = useState(false);
+  const [terminalReady, setTerminalReady] = useState(false);
   const terminalTitle = project
     ? `${projectLabel(project)} terminal`
     : "OpenCode Terminal";
@@ -114,6 +117,7 @@ export function TerminalView({ directory, connected, project, active }) {
     terminal.open(container);
     terminalRef.current = terminal;
     fitRef.current = fit;
+    setTerminalReady(true);
 
     const dataSubscription = terminal.onData((data) => {
       socketRef.current?.send(data);
@@ -306,6 +310,16 @@ export function TerminalView({ directory, connected, project, active }) {
     setAttempt((value) => value + 1);
   }
 
+  function copyTerminalOutput() {
+    const element = terminalRef.current?.element;
+    const text = element ? element.innerText : "";
+    if (!text?.trim()) return;
+    copyText(text).then(() => {
+      setTerminalCopied(true);
+      setTimeout(() => setTerminalCopied(false), 1500);
+    });
+  }
+
   function clearTerminal() {
     terminalRef.current?.clear();
     terminalRef.current?.scrollToBottom();
@@ -355,6 +369,16 @@ export function TerminalView({ directory, connected, project, active }) {
             onClick={clearTerminal}
           >
             Clear
+          </button>
+          <button
+            type="button"
+            className="copy-button terminal-copy"
+            onClick={copyTerminalOutput}
+            disabled={!terminalReady}
+            title={terminalCopied ? "Copied" : "Copy terminal output"}
+            aria-label={terminalCopied ? "Copied" : "Copy terminal output"}
+          >
+            {terminalCopied ? "Copied" : "Copy output"}
           </button>
         </div>
       </header>

@@ -1822,6 +1822,57 @@ h2 {
   opacity: 0.55;
 }
 
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: #c4c4ce;
+  background: #1c1c22;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copy-button:hover:not(:disabled) {
+  background: #292930;
+  color: #e7e7ee;
+}
+
+.copy-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.copy-button.copied {
+  color: var(--success);
+  border-color: rgba(104, 214, 164, 0.35);
+  background: rgba(104, 214, 164, 0.08);
+}
+
+.message-copy {
+  min-height: 26px;
+  padding: 3px 7px;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.code-copy {
+  min-height: 26px;
+  padding: 3px 7px;
+  font-size: 10px;
+  margin-left: 10px;
+}
+
+.terminal-copy {
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 11px;
+  margin-left: 10px;
+}
+
 .todo-status {
   display: grid;
   place-items: center;

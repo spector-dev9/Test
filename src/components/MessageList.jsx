@@ -1,3 +1,4 @@
+import { CopyButton } from "./CopyButton";
 import { formatSessionTime } from "../lib/workspace";
 
 function ToolLine({ tool }) {
@@ -46,9 +47,14 @@ function MessageText({ text }) {
       {textSegments(text).map((segment, index) =>
         segment.type === "code" ? (
           <div className="message-code" key={`code-${index}`}>
-            <div className="message-code-head">
-              <span>{segment.language}</span>
-            </div>
+          <div className="message-code-head">
+            <span>{segment.language}</span>
+            <CopyButton
+              text={segment.value}
+              title="Copy code"
+              className="code-copy"
+            />
+          </div>
             <pre><code>{segment.value}</code></pre>
           </div>
         ) : (
@@ -79,6 +85,13 @@ export function MessageList({ messages, phase }) {
             {message.model ? <span>{message.model}</span> : null}
             {message.role === "assistant" && !message.completed ? (
               <span className="message-live">working</span>
+            ) : null}
+            {message.role === "assistant" && message.text ? (
+              <CopyButton
+                text={message.text}
+                title={message.completed ? "Copy message" : "Copy current message text"}
+                className="message-copy"
+              />
             ) : null}
           </div>
 
