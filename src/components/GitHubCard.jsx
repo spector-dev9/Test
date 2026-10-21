@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CONNECTION_ERROR_KINDS } from "../lib/connection";
+import { DetailRow } from "./DetailRow";
 import {
   authorizeGitHubCopilot,
   completeGitHubCopilot,
@@ -698,15 +699,6 @@ export function GitHubCard({
         Tokens stay in memory on this screen and are never stored by the app.
         Use a fine-grained GitHub token with repository contents write access.
       </p>
-    </div>
-  );
-}
-
-function DetailRow({ label, children }) {
-  return (
-    <div className="detail-row">
-      <dt>{label}</dt>
-      <dd>{children}</dd>
     </div>
   );
 }

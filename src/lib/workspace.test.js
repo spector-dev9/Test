@@ -112,7 +112,15 @@ test("normalizes OpenCode conversation rows into safe display messages", () => {
       id: "msg_assistant",
       role: "assistant",
       text: "Working",
-      tools: [{ id: "tool_1", name: "bash", status: "completed" }],
+      tools: [
+        {
+          id: "tool_1",
+          name: "bash",
+          status: "completed",
+          title: "",
+          detail: "",
+        },
+      ],
       error: "The response was stopped.",
       created: 2000,
       completed: true,

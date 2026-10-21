@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LocalServerPlugin.class);
         registerPlugin(StoragePlugin.class);
         registerPlugin(GitHubPlugin.class);
+        registerPlugin(LinuxEnvironment.class);
         EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
         requestNotificationPermission();

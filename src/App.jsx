@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { App as CapacitorApp } from "@capacitor/app";
 import "./App.css";
 import { ChangesView } from "./components/ChangesView";
 import { ChatView } from "./components/ChatView";
 import { ContextView } from "./components/ContextView";
 import { FilesView } from "./components/FilesView";
 import { ModelsView } from "./components/ModelsView";
+import { PreviewView } from "./components/PreviewView";
 import { SessionsView } from "./components/SessionsView";
 import { LocalServerGate } from "./components/LocalServerGate";
 import { SettingsView } from "./components/SettingsView";
@@ -27,6 +29,18 @@ import {
   normalizeProjectDirectory,
 } from "./lib/project";
 import { registerProjectDirectories } from "./lib/projectScope";
+import {
+  readStoredActiveView,
+  readStoredSessionId,
+  storeActiveView,
+  storeSessionId,
+} from "./lib/prefs";
+import {
+  applyUiPrefs,
+  normalizeUiPrefs,
+  readUiPrefs,
+  writeUiPrefs,
+} from "./lib/uiPrefs";
 import {
   buildSessionTitle,
   describeServer,
@@ -174,8 +188,10 @@ export default function App() {
   const [serverGateDismissed, setServerGateDismissed] = useState(false);
   const [runtimeReady, setRuntimeReady] = useState(readStoredRuntimeReady);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeView, setActiveView] = useState("chat");
-  const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [activeView, setActiveView] = useState(readStoredActiveView);
+  const [selectedSessionId, setSelectedSessionId] = useState(
+    readStoredSessionId,
+  );
   const [preferredModel, setPreferredModel] = useState(readStoredModel);
   const [workspaceDirectory, setWorkspaceDirectory] = useState(
     readStoredWorkspaceDirectory,
@@ -186,9 +202,14 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
   const [fileIntent, setFileIntent] = useState(null);
+  const [terminalIntent, setTerminalIntent] = useState(null);
+  const [uiPrefs, setUiPrefs] = useState(() => readUiPrefs());
   const menuButtonRef = useRef(null);
   const drawerRef = useRef(null);
   const wasMenuOpen = useRef(false);
+  const activeViewRef = useRef(activeView);
+  const viewHistoryRef = useRef([]);
+  const backHandlerRef = useRef(null);
 
   const connected = Boolean(health.data?.healthy);
   const serverGateImmediate =
@@ -217,15 +238,6 @@ export default function App() {
   useEffect(() => {
     if (localServer.state === "running") refreshProjects();
   }, [localServer.state, refreshProjects]);
-
-  useEffect(() => {
-    if (!localServer.supported || localServer.state !== "running" || connected) {
-      return undefined;
-    }
-
-    const timer = window.setInterval(refreshProjects, 2500);
-    return () => window.clearInterval(timer);
-  }, [connected, localServer.state, localServer.supported, refreshProjects]);
 
   const workspaceProject = useMemo(() => {
     if (!workspaceDirectory) return null;
@@ -291,6 +303,7 @@ export default function App() {
     createSession,
     creatingSession,
     createError,
+    clearCreateError,
     renameSession,
     setSessionArchived,
     deleteSession,
@@ -339,9 +352,12 @@ export default function App() {
     sessions.status === "refreshing";
   const connection = connected
     ? { tone: "online", label: refreshing ? "Refreshing" : "Connected" }
-    : health.status === "offline"
-      ? { tone: "offline", label: offlineLabel(health.errorKind) }
-      : { tone: "loading", label: "Connecting" };
+    : health.status !== "offline"
+      ? { tone: "loading", label: "Connecting" }
+      : health.retrying &&
+          (health.errorKind === "network" || health.errorKind === "timeout")
+        ? { tone: "loading", label: "Reconnecting" }
+        : { tone: "offline", label: offlineLabel(health.errorKind) };
   const canRefresh = !refreshBusy;
   const busyLabel = refreshing
     ? "Refreshing connection, projects, and sessions"
@@ -371,6 +387,123 @@ export default function App() {
     [selectedSessionId, sessions.data, visibleSessionData],
   );
   const activeSessionId = selectedSession?.id ?? null;
+
+  useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
+    storeActiveView(activeView);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeSessionId) {
+      storeSessionId(activeSessionId);
+      return;
+    }
+
+    if (sessions.status === "ready" || sessions.status === "refreshing") {
+      storeSessionId(null);
+    }
+  }, [activeSessionId, sessions.status]);
+
+  useEffect(() => {
+    applyUiPrefs(uiPrefs);
+    writeUiPrefs(uiPrefs);
+  }, [uiPrefs]);
+
+  const handleChangeUiPref = useCallback((key, value) => {
+    setUiPrefs((previous) => normalizeUiPrefs({ ...previous, [key]: value }));
+  }, []);
+
+  const handleNavigate = useCallback((view) => {
+    const current = activeViewRef.current;
+
+    if (view !== current) {
+      viewHistoryRef.current.push(current);
+      if (viewHistoryRef.current.length > 24) viewHistoryRef.current.shift();
+      activeViewRef.current = view;
+    }
+
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    setActiveView(view);
+    setMenuOpen(false);
+  }, []);
+
+  useEffect(() => {
+    backHandlerRef.current = () => {
+      if (menuOpen) {
+        setMenuOpen(false);
+        return;
+      }
+
+      if (showServerGate) return;
+
+      const modalOpen = document.querySelector(
+        '[role="dialog"][aria-modal="true"], [role="menu"]',
+      );
+
+      if (modalOpen) {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        return;
+      }
+
+      if (activeViewRef.current !== "chat") {
+        const history = viewHistoryRef.current;
+        let target = null;
+
+        while (history.length > 0) {
+          const candidate = history.pop();
+          if (candidate && candidate !== activeViewRef.current) {
+            target = candidate;
+            break;
+          }
+        }
+
+        if (!target) target = "chat";
+
+        activeViewRef.current = target;
+        setActiveView(target);
+
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        return;
+      }
+
+      if (draft.trim()) {
+        setDraft("");
+        return;
+      }
+
+      CapacitorApp.exitApp();
+    };
+  });
+
+  useEffect(() => {
+    let listenerHandle = null;
+    let cancelled = false;
+
+    CapacitorApp.addListener("backButton", () => {
+      backHandlerRef.current?.();
+    })
+      .then((handle) => {
+        if (cancelled) {
+          handle.remove();
+          return;
+        }
+        listenerHandle = handle;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (listenerHandle) listenerHandle.remove();
+    };
+  }, []);
 
   const validPreferredModel = useMemo(() => {
     if (!preferredModel) return null;
@@ -480,9 +613,8 @@ export default function App() {
 
     if (session) {
       setSelectedSessionId(session.id);
-      setActiveView("chat");
       setDraft("");
-      setMenuOpen(false);
+      handleNavigate("chat");
     }
 
     return session;
@@ -491,6 +623,7 @@ export default function App() {
     createSession,
     creatingSession,
     effectiveModel,
+    handleNavigate,
     sessionActionsDisabled,
   ]);
 
@@ -498,10 +631,9 @@ export default function App() {
     (sessionId) => {
       if (sessionActionsDisabled) return;
       setSelectedSessionId(sessionId);
-      setActiveView("chat");
-      setMenuOpen(false);
+      handleNavigate("chat");
     },
-    [sessionActionsDisabled],
+    [handleNavigate, sessionActionsDisabled],
   );
 
   const handleSelectProject = useCallback(
@@ -522,12 +654,12 @@ export default function App() {
       storeProjectId(projectId);
       setSelectedSessionId(null);
       setDraft("");
-      setActiveView("chat");
-      setMenuOpen(false);
+      handleNavigate("chat");
     },
     [
       activeProject.id,
       creatingSession,
+      handleNavigate,
       scopedProjects.data,
       sessionActionsDisabled,
     ],
@@ -555,12 +687,11 @@ export default function App() {
       storeProjectId(null);
       setSelectedSessionId(null);
       setDraft("");
-      setActiveView("chat");
-      setMenuOpen(false);
+      handleNavigate("chat");
 
       return { ok: true };
     },
-    [workspaceDirectory],
+    [handleNavigate, workspaceDirectory],
   );
 
   const handleArchiveSession = useCallback(
@@ -581,20 +712,10 @@ export default function App() {
     [selectedSessionId, setSessionArchived, showArchived],
   );
 
-  const handleNavigate = useCallback((view) => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-
-    setActiveView(view);
-    setMenuOpen(false);
-  }, []);
-
   const handleOpenRuntimeSettings = useCallback(() => {
     setServerGateDismissed(true);
-    setActiveView("settings");
-    setMenuOpen(false);
-  }, []);
+    handleNavigate("settings");
+  }, [handleNavigate]);
 
   const handleRetryRuntime = useCallback(() => {
     setServerGateDismissed(false);
@@ -631,8 +752,26 @@ export default function App() {
   const handleSelectModel = useCallback((model) => {
     setPreferredModel(model);
     storeModel(model);
-    setActiveView("chat");
-  }, []);
+    handleNavigate("chat");
+  }, [handleNavigate]);
+
+  const handleRunInTerminal = useCallback(
+    (command) => {
+      if (!command?.trim()) return;
+      setTerminalIntent({ command: command.trim(), nonce: Date.now() });
+      handleNavigate("terminal");
+    },
+    [handleNavigate],
+  );
+
+  const handleOpenFileFromChanges = useCallback(
+    (path) => {
+      if (typeof path !== "string" || !path) return;
+      handleNavigate("files");
+      setFileIntent({ kind: "open-file", path, nonce: Date.now() });
+    },
+    [handleNavigate],
+  );
 
   const handleSelectVariant = useCallback((model, variant) => {
     const next = {
@@ -657,6 +796,7 @@ export default function App() {
     onNewSession: handleNewSession,
     creatingSession,
     createError,
+    clearCreateError,
     connected,
     sessionActionsDisabled,
     projects: scopedProjects,
@@ -735,6 +875,7 @@ export default function App() {
                 messages={conversation.messages}
                 phase={conversation.phase}
                 actionError={conversation.actionError}
+                onClearActionError={conversation.clearActionError}
                 lastSubmission={conversation.lastSubmission}
                 permissions={conversation.permissions}
                 permissionError={conversation.permissionError}
@@ -756,7 +897,7 @@ export default function App() {
                 commands={resources.commands}
                 effectiveModel={effectiveModel}
                 modelLabel={modelLabel}
-                onOpenModels={() => setActiveView("models")}
+                onOpenModels={() => handleNavigate("models")}
                 draft={draft}
                 onDraftChange={setDraft}
               />
@@ -798,7 +939,16 @@ export default function App() {
                 connected={connected}
                 project={activeProject}
                 active={activeView === "terminal"}
-                agent={selectedSession?.agent}
+                intent={terminalIntent}
+                terminalFontSize={uiPrefs.terminalFontSize}
+              />
+            </div>
+
+            <div className="view-pane" hidden={activeView !== "preview"}>
+              <PreviewView
+                connected={connected}
+                active={activeView === "preview"}
+                onRunInTerminal={handleRunInTerminal}
               />
             </div>
 
@@ -842,6 +992,7 @@ export default function App() {
                 onRefresh={refreshChanges}
                 connected={connected}
                 project={activeProject}
+                onOpenFile={handleOpenFileFromChanges}
               />
             ) : null}
 
@@ -859,6 +1010,8 @@ export default function App() {
                 onSelectWorkspace={handleSelectWorkspace}
                 onProjectsChanged={refreshProjects}
                 onProvidersChanged={resources.refresh}
+                uiPrefs={uiPrefs}
+                onChangeUiPref={handleChangeUiPref}
               />
             ) : null}
           </div>

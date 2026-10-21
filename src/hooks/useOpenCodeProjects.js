@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { connectionFailure } from "../lib/connection";
+import { connectionFailure } from "../lib/connection.js";
 import {
   checkConnection,
   listProjects,
-} from "../lib/opencode";
+} from "../lib/opencode.js";
+
+const HEALTHY_POLL_MS = 20000;
+const RETRY_BASE_MS = 2000;
+const RETRY_MAX_MS = 30000;
+
+export function retryDelayMs(failures) {
+  const count = Number(failures);
+  const safeCount =
+    Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1;
+  const exponent = safeCount - 1;
+  return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** exponent);
+}
 
 const initialHealth = {
   status: "loading",
   data: null,
   error: null,
   errorKind: null,
+  retrying: false,
 };
 
 const initialProjects = {
@@ -22,44 +35,55 @@ const initialProjects = {
 export function useOpenCodeProjects() {
   const [health, setHealth] = useState(initialHealth);
   const [projects, setProjects] = useState(initialProjects);
-  const [refreshToken, setRefreshToken] = useState(0);
+  const [runToken, setRunToken] = useState(0);
   const requestRef = useRef(0);
+  const failuresRef = useRef(0);
+  const connectedRef = useRef(false);
 
   useEffect(() => {
-    const requestId = requestRef.current + 1;
-    requestRef.current = requestId;
-    const controller = new AbortController();
+    let disposed = false;
+    let controller = null;
+    let timer = null;
 
-    async function load() {
+    async function attempt() {
+      const runId = requestRef.current + 1;
+      requestRef.current = runId;
+      controller = new AbortController();
+
       const [healthResult, projectsResult] = await Promise.allSettled([
         checkConnection(controller.signal),
         listProjects(controller.signal),
       ]);
 
-      if (
-        controller.signal.aborted ||
-        requestRef.current !== requestId
-      ) {
-        return;
+      if (disposed || requestRef.current !== runId) {
+        return null;
       }
 
+      let healthy = false;
+
       if (healthResult.status === "fulfilled") {
+        healthy = true;
+        failuresRef.current = 0;
+        connectedRef.current = true;
         setHealth({
           status: "online",
           data: healthResult.value,
           error: null,
           errorKind: null,
+          retrying: false,
         });
       } else {
         const failure = connectionFailure(
           healthResult.reason,
           "The OpenCode server could not be reached.",
         );
+        failuresRef.current += 1;
         setHealth({
           status: "offline",
           data: null,
           error: failure.message,
           errorKind: failure.kind,
+          retrying: connectedRef.current,
         });
       }
 
@@ -82,12 +106,39 @@ export function useOpenCodeProjects() {
           errorKind: failure.kind,
         }));
       }
+
+      return healthy;
     }
 
-    load();
+    async function loop() {
+      let healthy;
 
-    return () => controller.abort();
-  }, [refreshToken]);
+      try {
+        healthy = await attempt();
+      } catch {
+        failuresRef.current += 1;
+        healthy = false;
+      }
+
+      if (disposed || healthy === null) return;
+
+      const delay = healthy
+        ? HEALTHY_POLL_MS
+        : retryDelayMs(failuresRef.current);
+
+      timer = window.setTimeout(() => {
+        loop();
+      }, delay);
+    }
+
+    loop();
+
+    return () => {
+      disposed = true;
+      if (controller) controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [runToken]);
 
   const refresh = useCallback(() => {
     setHealth((previous) => ({
@@ -95,6 +146,7 @@ export function useOpenCodeProjects() {
       data: previous.data,
       error: null,
       errorKind: null,
+      retrying: false,
     }));
     setProjects((previous) => ({
       status: previous.data.length > 0 ? "refreshing" : "loading",
@@ -102,7 +154,7 @@ export function useOpenCodeProjects() {
       error: null,
       errorKind: null,
     }));
-    setRefreshToken((value) => value + 1);
+    setRunToken((value) => value + 1);
   }, []);
 
   return { health, projects, refresh };

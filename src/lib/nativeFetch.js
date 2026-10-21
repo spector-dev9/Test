@@ -557,6 +557,11 @@ function validateReadRequest(url) {
     return;
   }
 
+  if (url.pathname === PTY_PATH) {
+    requireProjectQuery(url);
+    return;
+  }
+
   if (url.pathname === SESSION_STATUS_PATH) {
     requireProjectQuery(url);
     return;

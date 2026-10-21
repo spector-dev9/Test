@@ -1,67 +1,75 @@
+import { Browser } from "@capacitor/browser";
 import { CopyButton } from "./CopyButton";
+import { MarkdownText } from "./Markdown";
+import { highlightCode } from "../lib/highlight";
 import { formatSessionTime } from "../lib/workspace";
+
+const TOOL_STATE = {
+  completed: "done",
+  error: "failed",
+  failed: "failed",
+  running: "running",
+  pending: "pending",
+};
+
+function toolStateClass(status) {
+  return TOOL_STATE[status] ?? "pending";
+}
 
 function ToolLine({ tool }) {
   return (
-    <div className="message-tool">
-      <span aria-hidden="true">⚙</span>
-      <span>{tool.name}</span>
+    <div className={`message-tool tool-${toolStateClass(tool.status)}`}>
+      <span className="tool-marker" aria-hidden="true" />
+      <span className="tool-name">{tool.name}</span>
+      {tool.title ? <span className="tool-title">{tool.title}</span> : null}
+      {tool.detail ? <code className="tool-detail">{tool.detail}</code> : null}
       <span className="tool-status">{tool.status}</span>
     </div>
   );
 }
 
-function textSegments(text) {
-  const pattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
-  const segments = [];
-  let lastIndex = 0;
-  let match;
+function openLink(url) {
+  Browser.open({ url }).catch(() => {});
+}
 
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({
-        type: "text",
-        value: text.slice(lastIndex, match.index),
-      });
-    }
+function renderCodeBlock({ language, value, key }) {
+  const tokens = highlightCode(value, language);
 
-    segments.push({
-      type: "code",
-      language:
-        match[1].trim().split(/\s+/)[0]?.slice(0, 24) || "code",
-      value: match[2].replace(/\n$/, ""),
-    });
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    segments.push({ type: "text", value: text.slice(lastIndex) });
-  }
-
-  return segments;
+  return (
+    <div className="message-code" key={key}>
+      <div className="message-code-head">
+        <span>{language || "code"}</span>
+        <CopyButton
+          text={value}
+          title="Copy code"
+          className="code-copy"
+        />
+      </div>
+      <pre>
+        <code>
+          {tokens.map((token, index) =>
+            token.type === "plain" ? (
+              token.text
+            ) : (
+              <span className={`tok tok-${token.type}`} key={`t-${index}`}>
+                {token.text}
+              </span>
+            ),
+          )}
+        </code>
+      </pre>
+    </div>
+  );
 }
 
 function MessageText({ text }) {
   return (
-    <div className="message-text">
-      {textSegments(text).map((segment, index) =>
-        segment.type === "code" ? (
-          <div className="message-code" key={`code-${index}`}>
-          <div className="message-code-head">
-            <span>{segment.language}</span>
-            <CopyButton
-              text={segment.value}
-              title="Copy code"
-              className="code-copy"
-            />
-          </div>
-            <pre><code>{segment.value}</code></pre>
-          </div>
-        ) : (
-          <span key={`text-${index}`}>{segment.value}</span>
-        ),
-      )}
-    </div>
+    <MarkdownText
+      text={text}
+      className="message-text"
+      onOpenLink={openLink}
+      renderCodeBlock={renderCodeBlock}
+    />
   );
 }
 

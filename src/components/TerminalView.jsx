@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -8,6 +8,7 @@ import {
 } from "../lib/connection";
 import {
   createProjectTerminal,
+  listProjectTerminals,
   removeProjectTerminal,
   resizeProjectTerminal,
 } from "../lib/opencode";
@@ -19,6 +20,7 @@ import {
   isLinuxEnvironmentReady,
   runLinuxCommand,
 } from "../lib/linuxEnvironment.js";
+import { readUiPrefs } from "../lib/uiPrefs.js";
 import { copyText } from "../lib/clipboard";
 
 const RESIZE_DEBOUNCE_MS = 220;
@@ -60,7 +62,83 @@ function statusLabel(status) {
   return STATUS_LABELS[status] ?? STATUS_LABELS.idle;
 }
 
-export function TerminalView({ directory, connected, project, active }) {
+const MAX_HISTORY = 200;
+const MAX_TRACKED_LINE = 400;
+
+function trackTerminalInput(data, bufferRef, pushHistory) {
+  let buffer = bufferRef.current ?? "";
+
+  for (let i = 0; i < data.length; i += 1) {
+    const char = data[i];
+
+    if (char === "\x1b") {
+      const next = data[i + 1];
+      if (next === "[") {
+        i += 2;
+        while (i < data.length && !/[@-~]/.test(data[i])) i += 1;
+      } else if (next === "O") {
+        i += 2;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === "\r" || char === "\n") {
+      pushHistory(buffer);
+      buffer = "";
+      continue;
+    }
+
+    if (char === "\x7f" || char === "\b") {
+      buffer = buffer.slice(0, -1);
+      continue;
+    }
+
+    if (char === "\x03") {
+      buffer = "";
+      continue;
+    }
+
+    if (char >= " " && char !== "\x7f") {
+      buffer += char;
+      if (buffer.length > MAX_TRACKED_LINE) {
+        buffer = buffer.slice(-MAX_TRACKED_LINE);
+      }
+    }
+  }
+
+  bufferRef.current = buffer;
+}
+
+function extractTerminalText(terminal) {
+  if (!terminal) return "";
+
+  const selection = terminal.getSelection();
+  if (selection && selection.trim()) return selection;
+
+  const buffer = terminal.buffer.active;
+  const rows = [];
+
+  for (let i = 0; i < buffer.length; i += 1) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    rows.push(line.translateToString(true).replace(/\s+$/, ""));
+  }
+
+  while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+
+  return rows.join("\n");
+}
+
+export function TerminalView({
+  directory,
+  connected,
+  project,
+  active,
+  intent,
+  terminalFontSize,
+}) {
   const [enabled, setEnabled] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("connecting");
@@ -73,6 +151,13 @@ export function TerminalView({ directory, connected, project, active }) {
   const [linuxCommand, setLinuxCommand] = useState("");
   const [linuxRunning, setLinuxRunning] = useState(false);
   const [showLinux, setShowLinux] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [activePtyId, setActivePtyId] = useState(null);
+  const [attachedId, setAttachedId] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [linuxHistoryIndex, setLinuxHistoryIndex] = useState(-1);
+  const [fullscreen, setFullscreen] = useState(false);
   const terminalTitle = project
     ? `${projectLabel(project)} terminal`
     : "OpenCode Terminal";
@@ -81,14 +166,85 @@ export function TerminalView({ directory, connected, project, active }) {
   const fitRef = useRef(null);
   const socketRef = useRef(null);
   const ptyRef = useRef(null);
+  const sessionsRef = useRef([]);
+  const lineBufferRef = useRef("");
+  const linuxDraftRef = useRef("");
   const resizeTimerRef = useRef(null);
   const activeRef = useRef(active);
   const directoryRef = useRef(directory);
+  const pendingCommandRef = useRef(null);
+  const intentNonceRef = useRef(null);
 
   useEffect(() => {
     activeRef.current = active;
     directoryRef.current = directory;
-  }, [active, directory]);
+    sessionsRef.current = sessions;
+  }, [active, directory, sessions]);
+
+  useEffect(() => {
+    if (!intent?.command || !intent.nonce) return;
+    if (intent.nonce === intentNonceRef.current) return;
+
+    intentNonceRef.current = intent.nonce;
+    pendingCommandRef.current = String(intent.command);
+  }, [intent?.command, intent?.nonce]);
+
+  useEffect(() => {
+    const command = pendingCommandRef.current;
+    if (status !== "live" || !command) return;
+
+    pendingCommandRef.current = null;
+    terminalRef.current?.input(`${command}\r`, true);
+  }, [intent, status]);
+
+  const pushHistory = useCallback((command) => {
+    const normalized = typeof command === "string" ? command.trim() : "";
+    if (!normalized) return;
+
+    setHistory((previous) => {
+      if (previous[0] === normalized) return previous;
+
+      const next = [
+        normalized,
+        ...previous.filter((entry) => entry !== normalized),
+      ];
+
+      return next.length > MAX_HISTORY ? next.slice(0, MAX_HISTORY) : next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!connected) return undefined;
+
+    let cancelled = false;
+
+    listProjectTerminals(directory)
+      .then((list) => {
+        if (cancelled) return;
+        setSessions(list);
+        setActivePtyId((previous) =>
+          previous && !list.some((entry) => entry.id === previous)
+            ? null
+            : previous,
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt, connected, directory]);
+
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!active) terminalRef.current?.blur();
@@ -116,7 +272,7 @@ export function TerminalView({ directory, connected, project, active }) {
       cursorStyle: "bar",
       fontFamily:
         'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace',
-      fontSize: 13,
+      fontSize: readUiPrefs().terminalFontSize,
       lineHeight: 1.2,
       scrollback: 5000,
       smoothScrollDuration: 0,
@@ -131,6 +287,7 @@ export function TerminalView({ directory, connected, project, active }) {
     setTerminalReady(true);
 
     const dataSubscription = terminal.onData((data) => {
+      trackTerminalInput(data, lineBufferRef, pushHistory);
       socketRef.current?.send(data);
     });
     const resizeSubscription = terminal.onResize(({ cols, rows }) => {
@@ -178,7 +335,20 @@ export function TerminalView({ directory, connected, project, active }) {
       terminalRef.current = null;
       fitRef.current = null;
     };
-  }, []);
+  }, [pushHistory]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    const size = Number.isFinite(terminalFontSize) ? terminalFontSize : 13;
+    if (!terminal || terminal.options.fontSize === size) return;
+
+    terminal.options.fontSize = size;
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // The terminal may not be measurable during a layout change.
+    }
+  }, [terminalFontSize]);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,17 +375,15 @@ export function TerminalView({ directory, connected, project, active }) {
     const terminal = terminalRef.current;
     let cancelled = false;
 
-    function teardown(socket, pty, remove) {
+    function teardown(socket, pty) {
       if (socketRef.current === socket) socketRef.current = null;
       if (socket) socket.close();
 
       if (ptyRef.current === pty) ptyRef.current = null;
-      if (pty && remove) {
-        removeProjectTerminal(directory, pty.id).catch(() => {});
-      }
+      setAttachedId((previous) => (previous === pty?.id ? null : previous));
     }
 
-    async function connect(pty) {
+    async function connect(pty, own) {
       let url;
 
       try {
@@ -227,7 +395,7 @@ export function TerminalView({ directory, connected, project, active }) {
         );
       } catch {
         ptyRef.current = null;
-        removeProjectTerminal(directory, pty.id).catch(() => {});
+        if (own) removeProjectTerminal(directory, pty.id).catch(() => {});
         setError("The terminal connection could not be opened.");
         setStatus("error");
         return;
@@ -255,6 +423,9 @@ export function TerminalView({ directory, connected, project, active }) {
             closed = true;
             if (socketRef.current === connection) socketRef.current = null;
             ptyRef.current = null;
+            setAttachedId((previous) =>
+              previous === pty.id ? null : previous,
+            );
             setStatus("closed");
             setError(null);
             terminal?.write(
@@ -266,7 +437,7 @@ export function TerminalView({ directory, connected, project, active }) {
         if (cancelled) return;
 
         ptyRef.current = null;
-        removeProjectTerminal(directory, pty.id).catch(() => {});
+        if (own) removeProjectTerminal(directory, pty.id).catch(() => {});
         setError("The terminal connection could not be established.");
         setStatus("error");
         return;
@@ -278,6 +449,7 @@ export function TerminalView({ directory, connected, project, active }) {
       }
 
       socketRef.current = connection;
+      setAttachedId(pty.id);
       setStatus("live");
       setError(null);
 
@@ -301,6 +473,18 @@ export function TerminalView({ directory, connected, project, active }) {
       setError(null);
       terminal?.reset();
 
+      const target = activePtyId
+        ? sessionsRef.current.find((entry) => entry.id === activePtyId)
+        : null;
+
+      if (target) {
+        ptyRef.current = target;
+        connect(target, false);
+        return;
+      }
+
+      if (activePtyId) setActivePtyId(null);
+
       try {
         const pty = await createProjectTerminal(directory, {
           title: terminalTitle,
@@ -312,7 +496,12 @@ export function TerminalView({ directory, connected, project, active }) {
         }
 
         ptyRef.current = pty;
-        connect(pty);
+        setSessions((previous) =>
+          previous.some((entry) => entry.id === pty.id)
+            ? previous
+            : [...previous, pty],
+        );
+        connect(pty, true);
       } catch (failure) {
         if (cancelled) return;
 
@@ -330,9 +519,16 @@ export function TerminalView({ directory, connected, project, active }) {
 
     return () => {
       cancelled = true;
-      teardown(socketRef.current, ptyRef.current, true);
+      teardown(socketRef.current, ptyRef.current);
     };
-  }, [attempt, connected, directory, enabled, terminalTitle]);
+  }, [
+    activePtyId,
+    attempt,
+    connected,
+    directory,
+    enabled,
+    terminalTitle,
+  ]);
 
   function reconnect() {
     setError(null);
@@ -341,9 +537,8 @@ export function TerminalView({ directory, connected, project, active }) {
   }
 
   function copyTerminalOutput() {
-    const element = terminalRef.current?.element;
-    const text = element ? element.innerText : "";
-    if (!text?.trim()) return;
+    const text = extractTerminalText(terminalRef.current);
+    if (!text.trim()) return;
     copyText(text).then(() => {
       setTerminalCopied(true);
       setTimeout(() => setTerminalCopied(false), 1500);
@@ -355,18 +550,65 @@ export function TerminalView({ directory, connected, project, active }) {
     terminalRef.current?.scrollToBottom();
   }
 
+  function newSession() {
+    setShowHistory(false);
+    if (activePtyId === null) {
+      setAttempt((value) => value + 1);
+      return;
+    }
+    setActivePtyId(null);
+  }
+
+  function attachSession(session) {
+    if (session.id === attachedId) return;
+    setShowHistory(false);
+    setActivePtyId(session.id);
+  }
+
+  async function closeSession(session) {
+    setSessions((previous) =>
+      previous.filter((entry) => entry.id !== session.id),
+    );
+
+    if (attachedId === session.id) {
+      if (activePtyId === session.id) setActivePtyId(null);
+      else setAttempt((value) => value + 1);
+    }
+
+    removeProjectTerminal(directory, session.id).catch(() => {});
+  }
+
+  function sendHistoryCommand(command) {
+    setShowHistory(false);
+    if (status !== "live" || !command) return;
+
+    terminalRef.current?.input(`${command}\r`, true);
+    pushHistory(command);
+  }
+
+  function toggleFullscreen() {
+    const next = !fullscreen;
+    setFullscreen(next);
+    if (next) {
+      requestAnimationFrame(() => terminalRef.current?.focus());
+    }
+  }
+
   async function runLinux() {
     if (!linuxCommand.trim() || linuxRunning) return;
+    const command = linuxCommand;
+    pushHistory(command);
+    setLinuxHistoryIndex(-1);
     setLinuxRunning(true);
     try {
-      const result = await runLinuxCommand(linuxCommand);
+      const result = await runLinuxCommand(command);
       setLinuxOutput((previous) =>
-        previous + `$ ${linuxCommand}\n${result.output}\n`
+        previous + `$ ${command}\n${result.output}\n`
       );
       setLinuxCommand("");
     } catch (failure) {
       setLinuxOutput((previous) =>
-        previous + `$ ${linuxCommand}\nError: ${failure.message}\n`
+        previous + `$ ${command}\nError: ${failure.message}\n`
       );
     } finally {
       setLinuxRunning(false);
@@ -382,7 +624,10 @@ export function TerminalView({ directory, connected, project, active }) {
     !connected || visibleStatus === "connecting";
 
   return (
-    <section className="terminal-view" aria-labelledby="terminal-heading">
+    <section
+      className={`terminal-view${fullscreen ? " terminal-fullscreen" : ""}`}
+      aria-labelledby="terminal-heading"
+    >
       <header className="terminal-toolbar">
         <div className="terminal-heading">
           <span className="panel-kicker">PROJECT PTY</span>
@@ -428,6 +673,31 @@ export function TerminalView({ directory, connected, project, active }) {
           >
             {terminalCopied ? "Copied" : "Copy output"}
           </button>
+          <button
+            type="button"
+            className={`secondary-button compact-button${showHistory ? " active" : ""}`}
+            onClick={() => setShowHistory((value) => !value)}
+            aria-expanded={showHistory}
+            aria-controls="terminal-history-panel"
+            title="Command history"
+          >
+            History
+            {history.length > 0 ? (
+              <span className="history-count" aria-hidden="true">
+                {history.length}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={toggleFullscreen}
+            aria-pressed={fullscreen}
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
+          >
+            {fullscreen ? "Exit" : "Expand"}
+          </button>
           {linuxSupported && (
             <button
               type="button"
@@ -441,6 +711,104 @@ export function TerminalView({ directory, connected, project, active }) {
           )}
         </div>
       </header>
+
+      {sessions.length > 0 ? (
+        <div
+          className="terminal-sessions"
+          role="group"
+          aria-label="Terminal sessions"
+        >
+          {sessions.map((session) => {
+            const isSelected =
+              session.id === activePtyId || session.id === attachedId;
+
+            return (
+              <div
+                key={session.id}
+                className={`terminal-session${isSelected ? " active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="terminal-session-tab"
+                  onClick={() => attachSession(session)}
+                  aria-pressed={isSelected}
+                  title={`${session.command} · ${session.status}`}
+                >
+                  <span
+                    className={`session-dot session-dot-${session.status}`}
+                    aria-hidden="true"
+                  />
+                  <span className="terminal-session-title">{session.title}</span>
+                </button>
+                <button
+                  type="button"
+                  className="terminal-session-close"
+                  onClick={() => closeSession(session)}
+                  aria-label={`Close session ${session.title}`}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="secondary-button compact-button terminal-session-new"
+            onClick={newSession}
+            disabled={controlsDisabled}
+          >
+            + New
+          </button>
+        </div>
+      ) : null}
+
+      {showHistory ? (
+        <div
+          className="terminal-history"
+          id="terminal-history-panel"
+          role="region"
+          aria-label="Command history"
+        >
+          <div className="terminal-history-head">
+            <span className="panel-kicker">COMMAND HISTORY</span>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setHistory([])}
+              disabled={history.length === 0}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setShowHistory(false)}
+              aria-label="Close command history"
+            >
+              Close
+            </button>
+          </div>
+          {history.length === 0 ? (
+            <p className="panel-note">
+              Commands you run in the terminal or Linux shell appear here.
+            </p>
+          ) : (
+            <ul className="terminal-history-list">
+              {history.map((command, index) => (
+                <li key={`${index}-${command}`}>
+                  <button
+                    type="button"
+                    onClick={() => sendHistoryCommand(command)}
+                    title="Run this command again"
+                  >
+                    <code>{command}</code>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
 
       <div className="terminal-panel">
         <div
@@ -468,11 +836,47 @@ export function TerminalView({ directory, connected, project, active }) {
               <input
                 className="linux-input-field"
                 value={linuxCommand}
-                onChange={(event) => setLinuxCommand(event.target.value)}
+                onChange={(event) => {
+                  setLinuxCommand(event.target.value);
+                  if (linuxHistoryIndex !== -1) setLinuxHistoryIndex(-1);
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") runLinux();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    runLinux();
+                    return;
+                  }
+
+                  if (event.key === "ArrowUp") {
+                    if (history.length === 0) return;
+                    event.preventDefault();
+                    if (linuxHistoryIndex === -1) {
+                      linuxDraftRef.current = linuxCommand;
+                    }
+                    const next =
+                      linuxHistoryIndex === -1
+                        ? 0
+                        : Math.min(
+                            linuxHistoryIndex + 1,
+                            history.length - 1,
+                          );
+                    setLinuxHistoryIndex(next);
+                    setLinuxCommand(history[next]);
+                    return;
+                  }
+
+                  if (event.key === "ArrowDown") {
+                    if (linuxHistoryIndex === -1) return;
+                    event.preventDefault();
+                    const next = linuxHistoryIndex - 1;
+                    setLinuxHistoryIndex(next);
+                    setLinuxCommand(
+                      next === -1 ? linuxDraftRef.current : history[next],
+                    );
+                  }
                 }}
                 placeholder="apk add python3"
+                aria-label="Linux shell command"
                 disabled={!linuxReady || linuxRunning}
               />
               <button

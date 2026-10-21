@@ -207,17 +207,49 @@ export function normalizeConversation(rows) {
 
     const tools = parts
       .filter((part) => part?.type === "tool")
-      .map((part) => ({
-        id: part.id,
-        name:
-          typeof part.tool === "string" && part.tool
-            ? part.tool
-            : "tool",
-        status:
-          typeof part.state?.status === "string"
-            ? part.state.status
-            : "unknown",
-      }));
+      .map((part) => {
+        const state =
+          part.state && typeof part.state === "object" ? part.state : {};
+        const input =
+          state.input && typeof state.input === "object" ? state.input : null;
+
+        let detail = "";
+
+        if (input) {
+          for (const key of [
+            "filePath",
+            "path",
+            "file",
+            "command",
+            "pattern",
+            "url",
+          ]) {
+            const value = input[key];
+            if (typeof value === "string" && value.trim()) {
+              detail = value.trim();
+              break;
+            }
+          }
+
+          if (!detail && typeof input.title === "string" && input.title.trim()) {
+            detail = input.title.trim();
+          }
+        }
+
+        return {
+          id: part.id,
+          name:
+            typeof part.tool === "string" && part.tool
+              ? part.tool
+              : "tool",
+          status: typeof state.status === "string" ? state.status : "unknown",
+          title:
+            typeof state.title === "string" && state.title.trim()
+              ? state.title.trim().slice(0, 200)
+              : "",
+          detail: detail.slice(0, 300),
+        };
+      });
 
     const error =
       info.role === "assistant"

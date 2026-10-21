@@ -116,6 +116,7 @@ export function ChatView({
   messages,
   phase,
   actionError,
+  onClearActionError,
   lastSubmission,
   permissions,
   permissionError,
@@ -143,7 +144,6 @@ export function ChatView({
 }) {
   const textareaRef = useRef(null);
   const scrollRef = useRef(null);
-  const bottomRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const submittingRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -538,8 +538,6 @@ export function ChatView({
             {rows.length > 0 ? (
               <MessageList messages={rows} phase={phase} />
             ) : null}
-
-            <div ref={bottomRef} />
           </section>
         )}
       </div>
@@ -594,6 +592,13 @@ export function ChatView({
                   Try stop again
                 </button>
               ) : null}
+              <button
+                type="button"
+                className="text-button"
+                onClick={onClearActionError}
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         ) : null}

@@ -60,6 +60,37 @@ function replaceTab(tabs, path, updater) {
   );
 }
 
+function collectMatches(content, query, limit = 5000) {
+  if (typeof content !== "string" || !query) return [];
+
+  const offsets = [];
+  let from = 0;
+
+  while (offsets.length < limit) {
+    const at = content.indexOf(query, from);
+    if (at === -1) break;
+    offsets.push(at);
+    from = at + query.length;
+  }
+
+  return offsets;
+}
+
+function lineForOffset(lineStarts, offset) {
+  if (!lineStarts || lineStarts.length === 0) return 1;
+
+  let low = 0;
+  let high = lineStarts.length - 1;
+
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (lineStarts[mid] <= offset) low = mid;
+    else high = mid - 1;
+  }
+
+  return low + 1;
+}
+
 function TreeRows({
   path,
   depth,
@@ -170,10 +201,19 @@ export function FilesView({ directory, connected, project, active, intent }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [newPath, setNewPath] = useState("");
   const [createError, setCreateError] = useState(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [gotoLine, setGotoLine] = useState("");
   const searchInputRef = useRef(null);
   const createInputRef = useRef(null);
+  const findInputRef = useRef(null);
+  const gotoInputRef = useRef(null);
   const editorRef = useRef(null);
   const gutterRef = useRef(null);
+  const previewRef = useRef(null);
   const mountedRef = useRef(true);
   const treeRef = useRef(tree);
   const loadingPathsRef = useRef(new Set());
@@ -433,9 +473,61 @@ export function FilesView({ directory, connected, project, active, intent }) {
     [activePath, tabs],
   );
 
-  const activeLines = useMemo(() => {
-    if (!activeTab || activeTab.type !== "text") return 1;
-    return activeTab.content.split("\n").length;
+  const lineStarts = useMemo(() => {
+    if (!activeTab || activeTab.type !== "text") return null;
+
+    const starts = [0];
+    const content = activeTab.content;
+
+    for (let i = 0; i < content.length; i += 1) {
+      if (content[i] === "\n") starts.push(i + 1);
+    }
+
+    return starts;
+  }, [activeTab]);
+
+  const activeLines = lineStarts ? lineStarts.length : 1;
+
+  const matches = useMemo(() => {
+    if (!findOpen || !findQuery || activeTab?.type !== "text") return [];
+    return collectMatches(activeTab.content, findQuery);
+  }, [activeTab, findOpen, findQuery]);
+
+  const safeMatchIndex =
+    matches.length > 0
+      ? Math.min(matchIndex, matches.length - 1)
+      : 0;
+
+  const matchLines = useMemo(() => {
+    const state = { lines: new Set(), current: 0 };
+
+    if (!findOpen || !findQuery || matches.length === 0 || !lineStarts) {
+      return state;
+    }
+
+    let line = 0;
+
+    for (let i = 0; i < matches.length; i += 1) {
+      while (
+        line + 1 < lineStarts.length &&
+        lineStarts[line + 1] <= matches[i]
+      ) {
+        line += 1;
+      }
+
+      state.lines.add(line + 1);
+      if (i === Math.min(matchIndex, matches.length - 1)) {
+        state.current = line + 1;
+      }
+    }
+
+    return state;
+  }, [findOpen, findQuery, lineStarts, matchIndex, matches]);
+
+  const previewLines = useMemo(() => {
+    if (!activeTab || activeTab.type !== "text") return null;
+    const lines = activeTab.content.split("\n");
+    return lines.length <= 20000 ? lines : null;
   }, [activeTab]);
 
   const refreshCurrent = useCallback(() => {
@@ -466,11 +558,17 @@ export function FilesView({ directory, connected, project, active, intent }) {
         searchInputRef.current?.focus();
       } else if (intent.kind === "refresh") {
         refreshCurrent();
+      } else if (
+        intent.kind === "open-file" &&
+        typeof intent.path === "string" &&
+        intent.path
+      ) {
+        openFile(intent.path);
       }
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [intent, refreshCurrent]);
+  }, [intent, openFile, refreshCurrent]);
 
   useEffect(() => {
     if (createOpen) {
@@ -495,6 +593,129 @@ export function FilesView({ directory, connected, project, active, intent }) {
         saveError: null,
       };
     });
+  }
+
+  function revealOffset(offset, selectionLength) {
+    const tab = activeTab;
+    if (!tab || tab.type !== "text" || !lineStarts) return;
+
+    const line = lineForOffset(lineStarts, offset);
+
+    if (editing && editorRef.current) {
+      const element = editorRef.current;
+      element.setSelectionRange(offset, offset + selectionLength);
+
+      const style = window.getComputedStyle(element);
+      const lineHeight =
+        Number.parseFloat(style.lineHeight) ||
+        Number.parseFloat(style.fontSize) * 1.4 ||
+        18;
+      element.scrollTop = Math.max(
+        0,
+        (line - 1) * lineHeight - element.clientHeight / 2,
+      );
+
+      if (gutterRef.current) {
+        gutterRef.current.scrollTop = element.scrollTop;
+      }
+      return;
+    }
+
+    const span = previewRef.current?.querySelector(`[data-line="${line}"]`);
+    span?.scrollIntoView({ block: "center" });
+  }
+
+  function jumpToMatch(nextIndex) {
+    if (matches.length === 0) return;
+
+    const total = matches.length;
+    const index = ((nextIndex % total) + total) % total;
+    setMatchIndex(index);
+    revealOffset(matches[index], findQuery.length);
+  }
+
+  function openFind(withReplace = false) {
+    if (
+      !activeTab ||
+      activeTab.status !== "ready" ||
+      activeTab.type !== "text"
+    ) {
+      return;
+    }
+
+    setFindOpen(true);
+    if (withReplace) setReplaceOpen(true);
+    requestAnimationFrame(() => findInputRef.current?.focus());
+  }
+
+  function handleEditorShortcut(event) {
+    if (!(event.metaKey || event.ctrlKey)) return;
+
+    const key = event.key.toLowerCase();
+
+    if (key === "s") {
+      event.preventDefault();
+      saveActive();
+      return;
+    }
+
+    if (key === "f" || key === "h") {
+      event.preventDefault();
+      openFind(key === "h");
+      return;
+    }
+
+    if (key === "g") {
+      event.preventDefault();
+      openFind();
+      requestAnimationFrame(() => gotoInputRef.current?.focus());
+    }
+  }
+
+  function replaceCurrentMatch() {
+    if (matches.length === 0 || activeTab?.type !== "text") return;
+
+    const offset = matches[safeMatchIndex];
+    const content = activeTab.content;
+    const queryEnd = offset + findQuery.length;
+    const next =
+      content.slice(0, offset) + replaceQuery + content.slice(queryEnd);
+
+    changeContent(next);
+
+    const newMatches = collectMatches(next, findQuery);
+    const after = offset + replaceQuery.length;
+    const target = newMatches.findIndex((at) => at >= after);
+    const index = target === -1 ? 0 : target;
+    setMatchIndex(index);
+
+    if (newMatches.length > 0) {
+      requestAnimationFrame(() => {
+        revealOffset(newMatches[index], findQuery.length);
+      });
+    }
+  }
+
+  function replaceAllMatches() {
+    if (!findQuery || activeTab?.type !== "text" || matches.length === 0) {
+      return;
+    }
+
+    const next = activeTab.content.split(findQuery).join(replaceQuery);
+    changeContent(next);
+    setMatchIndex(0);
+  }
+
+  function goToLine() {
+    const tab = activeTab;
+    if (!tab || tab.type !== "text" || !lineStarts) return;
+
+    const parsed = Number.parseInt(gotoLine, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return;
+
+    const line = Math.min(parsed, lineStarts.length);
+    setGotoLine(String(line));
+    revealOffset(lineStarts[line - 1], 0);
   }
 
   function closeTab(path) {
@@ -1037,6 +1258,16 @@ export function FilesView({ directory, connected, project, active, intent }) {
                   {!canEditActive ? (
                     <span className="readonly-badge">READ ONLY</span>
                   ) : null}
+                  {activeTab.status === "ready" && activeTab.type === "text" ? (
+                    <button
+                      type="button"
+                      className={`secondary-button compact-button${findOpen ? " active" : ""}`}
+                      onClick={() => (findOpen ? setFindOpen(false) : openFind())}
+                      title="Find in file (Ctrl/Cmd+F)"
+                    >
+                      Find
+                    </button>
+                  ) : null}
                   {canEditActive ? (
                     <button
                       type="button"
@@ -1080,6 +1311,153 @@ export function FilesView({ directory, connected, project, active, intent }) {
                 </p>
               ) : null}
 
+              {findOpen && activeTab.status === "ready" && activeTab.type === "text" ? (
+                <div className="editor-find" role="search" aria-label="Find in file">
+                  <div className="editor-find-row">
+                    <input
+                      ref={findInputRef}
+                      className="editor-find-input"
+                      type="text"
+                      value={findQuery}
+                      onChange={(event) => {
+                        setFindQuery(event.target.value);
+                        setMatchIndex(0);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          jumpToMatch(
+                            event.shiftKey
+                              ? safeMatchIndex - 1
+                              : safeMatchIndex + 1,
+                          );
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setFindOpen(false);
+                        }
+                      }}
+                      placeholder="Find"
+                      autoComplete="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
+                      aria-label="Find text"
+                    />
+                    <span className="editor-find-count" aria-live="polite">
+                      {findQuery
+                        ? matches.length > 0
+                          ? `${safeMatchIndex + 1} of ${matches.length}`
+                          : "No results"
+                        : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="editor-find-nav"
+                      onClick={() => jumpToMatch(safeMatchIndex - 1)}
+                      disabled={matches.length === 0}
+                      aria-label="Previous match"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="editor-find-nav"
+                      onClick={() => jumpToMatch(safeMatchIndex + 1)}
+                      disabled={matches.length === 0}
+                      aria-label="Next match"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className={`editor-find-toggle${replaceOpen ? " active" : ""}`}
+                      aria-pressed={replaceOpen}
+                      onClick={() => setReplaceOpen((value) => !value)}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      type="button"
+                      className="editor-find-close"
+                      onClick={() => setFindOpen(false)}
+                      aria-label="Close find"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="editor-find-row">
+                    {replaceOpen ? (
+                      <>
+                        <input
+                          className="editor-find-input"
+                          type="text"
+                          value={replaceQuery}
+                          onChange={(event) =>
+                            setReplaceQuery(event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              replaceCurrentMatch();
+                            } else if (event.key === "Escape") {
+                              event.preventDefault();
+                              setFindOpen(false);
+                            }
+                          }}
+                          placeholder="Replace with"
+                          autoComplete="off"
+                          autoCapitalize="off"
+                          spellCheck="false"
+                          aria-label="Replace text"
+                        />
+                        <button
+                          type="button"
+                          className="editor-find-nav"
+                          onClick={replaceCurrentMatch}
+                          disabled={matches.length === 0}
+                        >
+                          Replace
+                        </button>
+                        <button
+                          type="button"
+                          className="editor-find-nav"
+                          onClick={replaceAllMatches}
+                          disabled={matches.length === 0}
+                        >
+                          All
+                        </button>
+                      </>
+                    ) : null}
+                    <input
+                      ref={gotoInputRef}
+                      className="editor-find-input editor-goto-input"
+                      type="text"
+                      inputMode="numeric"
+                      value={gotoLine}
+                      onChange={(event) => setGotoLine(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          goToLine();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setFindOpen(false);
+                        }
+                      }}
+                      placeholder={`Line 1-${activeLines}`}
+                      aria-label="Go to line"
+                    />
+                    <button
+                      type="button"
+                      className="editor-find-nav"
+                      onClick={goToLine}
+                      disabled={!gotoLine.trim()}
+                    >
+                      Go
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {editing && canEditActive ? (
                 <div className="code-editor">
                   <pre
@@ -1102,15 +1480,7 @@ export function FilesView({ directory, connected, project, active, intent }) {
                           event.currentTarget.scrollTop;
                       }
                     }}
-                    onKeyDown={(event) => {
-                      if (
-                        (event.metaKey || event.ctrlKey) &&
-                        event.key.toLowerCase() === "s"
-                      ) {
-                        event.preventDefault();
-                        saveActive();
-                      }
-                    }}
+                    onKeyDown={handleEditorShortcut}
                     wrap="off"
                     spellCheck="false"
                     autoCapitalize="off"
@@ -1119,8 +1489,38 @@ export function FilesView({ directory, connected, project, active, intent }) {
                   />
                 </div>
               ) : (
-                <pre className="code-preview" tabIndex={0}>
-                  <code>{activeTab.content}</code>
+                <pre
+                  className="code-preview"
+                  ref={previewRef}
+                  tabIndex={0}
+                  onKeyDown={handleEditorShortcut}
+                >
+                  <code>
+                    {previewLines
+                      ? previewLines.map((line, index) => {
+                          const lineNo = index + 1;
+                          const isCurrent = matchLines.current === lineNo;
+                          const inMatch = matchLines.lines.has(lineNo);
+
+                          return (
+                            <span
+                              key={index}
+                              data-line={lineNo}
+                              className={
+                                isCurrent
+                                  ? "find-line-current"
+                                  : inMatch
+                                    ? "find-line"
+                                    : undefined
+                              }
+                            >
+                              {line}
+                              {index < previewLines.length - 1 ? "\n" : ""}
+                            </span>
+                          );
+                        })
+                      : activeTab.content}
+                  </code>
                 </pre>
               )}
             </div>

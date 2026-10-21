@@ -13,11 +13,12 @@ import { SessionList } from "./SessionList";
 const NAVIGATION = [
   { id: "chat", label: "Chat", icon: "⌘" },
   { id: "files", label: "Files", icon: "◇" },
-  { id: "context", label: "Context", icon: "◫" },
+  { id: "changes", label: "Changes", icon: "≡" },
   { id: "terminal", label: "Terminal", icon: "›_" },
+  { id: "preview", label: "Preview", icon: "◳" },
+  { id: "context", label: "Context", icon: "◫" },
   { id: "sessions", label: "Sessions", icon: "▤" },
   { id: "models", label: "Models", icon: "⌁" },
-  { id: "changes", label: "Changes", icon: "≡" },
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -35,6 +36,7 @@ export function SidebarContent({
   onNewSession,
   creatingSession,
   createError,
+  onClearCreateError,
   connected,
   sessionActionsDisabled,
   projects,
@@ -91,6 +93,13 @@ export function SidebarContent({
       {createError ? (
         <div className="inline-error" role="alert">
           <span>{createError.message}</span>
+          <button
+            type="button"
+            className="text-button inline-error-dismiss"
+            onClick={onClearCreateError}
+          >
+            Dismiss
+          </button>
         </div>
       ) : null}
 

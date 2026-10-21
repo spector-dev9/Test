@@ -28,16 +28,10 @@ import {
   describeServer,
   offlineLabel,
 } from "../lib/workspace";
+import { UI_PREF_LIMITS, normalizeUiPrefs } from "../lib/uiPrefs";
+import { copyText } from "../lib/clipboard";
+import { DetailRow } from "./DetailRow";
 import { GitHubCard } from "./GitHubCard";
-
-function DetailRow({ label, children }) {
-  return (
-    <div className="detail-row">
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  );
-}
 
 function runtimeConnection(status, connected) {
   if (status?.state === "error") {
@@ -74,6 +68,8 @@ export function SettingsView({
   onSelectWorkspace,
   onProjectsChanged,
   onProvidersChanged,
+  uiPrefs,
+  onChangeUiPref,
 }) {
   const native = Capacitor.isNativePlatform();
   const storageSupported = isStorageSupported();
@@ -98,6 +94,7 @@ export function SettingsView({
   const [linuxBusy, setLinuxBusy] = useState(false);
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxPkg, setLinuxPkg] = useState("");
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   useEffect(() => {
     if (!storageSupported) return undefined;
@@ -237,6 +234,51 @@ export function SettingsView({
     runtime.repair();
   }
 
+  const prefs = normalizeUiPrefs(uiPrefs);
+
+  async function copyDiagnostics() {
+    const lines = [
+      "OpenCode Mobile diagnostics",
+      `platform: ${Capacitor.getPlatform()} (native=${native})`,
+      `server: ${OPENCODE_BASE_URL}`,
+      `transport: ${native ? "capacitor-http" : "browser-fetch"}`,
+      `connected: ${connected}`,
+      `health: ${
+        health.errorKind || (connected ? "ok" : "unknown")
+      }${health.error ? ` — ${health.error}` : ""}`,
+      `version: ${connected ? `v${health.data.version}` : "unknown"}`,
+      `project: ${project ? projectPathLabel(project) : "none"}`,
+      `projects: ${
+        projects?.status === "ready"
+          ? `${projects.data.length} discovered`
+          : projects?.status || "unknown"
+      }`,
+      `runtime: ${
+        runtime
+          ? `${runtime.state}${runtime.version ? ` v${runtime.version}` : ""}`
+          : "none"
+      }`,
+      `workspace: ${workspaceDirectory ?? PROJECT_DIRECTORY}`,
+      `storage: ${
+        storage
+          ? storage.allFiles
+            ? "all-files allowed"
+            : "all-files not allowed"
+          : "unknown"
+      }`,
+      `linux: ${linuxReady ? "ready" : "not ready"}`,
+      `ui: fontScale=${prefs.fontScale}% reduceMotion=${prefs.reducedMotion} terminal=${prefs.terminalFontSize}px editor=${prefs.editorFontSize}px`,
+      `user-agent: ${
+        typeof navigator === "undefined" ? "unknown" : navigator.userAgent
+      }`,
+      `time: ${new Date().toISOString()}`,
+    ];
+
+    await copyText(lines.join("\n"));
+    setDiagnosticsCopied(true);
+    setTimeout(() => setDiagnosticsCopied(false), 1500);
+  }
+
   return (
     <section className="page-view" aria-labelledby="settings-heading">
       <div className="page-heading">
@@ -329,6 +371,98 @@ export function SettingsView({
             deliberate source and native-policy change followed by a rebuild.
           </p>
         </section>
+      </div>
+
+      <div className="panel settings-card">
+        <div className="panel-heading">
+          <div>
+            <span className="panel-kicker">APPEARANCE</span>
+            <h2>Comfort and layout</h2>
+          </div>
+        </div>
+
+        <div className="appearance-list">
+          <label className="appearance-row appearance-row-toggle">
+            <span className="appearance-copy">
+              <strong>Reduce motion</strong>
+              <small>Cuts animations and pulsing effects across the app.</small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={prefs.reducedMotion}
+              onChange={(event) =>
+                onChangeUiPref("reducedMotion", event.target.checked)
+              }
+            />
+          </label>
+
+          <label className="appearance-row">
+            <span className="appearance-copy">
+              <strong>Text size</strong>
+              <small>Scales the whole interface.</small>
+            </span>
+            <input
+              type="range"
+              min={UI_PREF_LIMITS.fontScale.min}
+              max={UI_PREF_LIMITS.fontScale.max}
+              step={UI_PREF_LIMITS.fontScale.step}
+              value={prefs.fontScale}
+              onChange={(event) =>
+                onChangeUiPref("fontScale", Number(event.target.value))
+              }
+              aria-label="Interface text size"
+            />
+            <output className="appearance-value">{prefs.fontScale}%</output>
+          </label>
+
+          <label className="appearance-row">
+            <span className="appearance-copy">
+              <strong>Terminal font</strong>
+              <small>Text size in the interactive shell.</small>
+            </span>
+            <input
+              type="range"
+              min={UI_PREF_LIMITS.terminalFontSize.min}
+              max={UI_PREF_LIMITS.terminalFontSize.max}
+              step={UI_PREF_LIMITS.terminalFontSize.step}
+              value={prefs.terminalFontSize}
+              onChange={(event) =>
+                onChangeUiPref("terminalFontSize", Number(event.target.value))
+              }
+              aria-label="Terminal font size"
+            />
+            <output className="appearance-value">
+              {prefs.terminalFontSize}px
+            </output>
+          </label>
+
+          <label className="appearance-row">
+            <span className="appearance-copy">
+              <strong>Editor font</strong>
+              <small>Text size in the file editor and preview.</small>
+            </span>
+            <input
+              type="range"
+              min={UI_PREF_LIMITS.editorFontSize.min}
+              max={UI_PREF_LIMITS.editorFontSize.max}
+              step={UI_PREF_LIMITS.editorFontSize.step}
+              value={prefs.editorFontSize}
+              onChange={(event) =>
+                onChangeUiPref("editorFontSize", Number(event.target.value))
+              }
+              aria-label="Editor font size"
+            />
+            <output className="appearance-value">
+              {prefs.editorFontSize}px
+            </output>
+          </label>
+        </div>
+
+        <p className="panel-note">
+          Preferences are stored on this device only. The terminal and editor
+          sizes are applied live without restarting the session.
+        </p>
       </div>
 
       {native ? (
@@ -560,6 +694,7 @@ export function SettingsView({
               value={linuxPkg}
               onChange={(event) => setLinuxPkg(event.target.value)}
               placeholder="apk package (e.g. python3, nodejs)"
+              aria-label="apk package name"
               disabled={linuxBusy || !linuxReady}
             />
             <button
@@ -584,8 +719,19 @@ export function SettingsView({
       ) : null}
 
       <div className="panel settings-card diagnostics-card">
-        <span className="panel-kicker">DIAGNOSTICS</span>
-        <h2>What this app can access</h2>
+        <div className="panel-heading">
+          <div>
+            <span className="panel-kicker">DIAGNOSTICS</span>
+            <h2>What this app can access</h2>
+          </div>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={copyDiagnostics}
+          >
+            {diagnosticsCopied ? "Copied" : "Copy report"}
+          </button>
+        </div>
         <ul className="settings-list">
           <li>Health, project discovery, and scoped session lists</li>
           <li>Session messages, prompts, commands, and abort requests</li>

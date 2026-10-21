@@ -49,5 +49,6 @@ test("joins a repository name inside the workspace only", () => {
   );
   assert.equal(joinWorkspacePath(PROJECT_DIRECTORY, "../escape"), null);
   assert.equal(joinWorkspacePath(PROJECT_DIRECTORY, "a/b"), null);
-  assert.equal(joinWorkspacePath("/relative", "repo"), null);
+  assert.equal(joinWorkspacePath("relative", "repo"), null);
+  assert.equal(joinWorkspacePath("/", "repo"), null);
 });

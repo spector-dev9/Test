@@ -69,6 +69,10 @@ export function PermissionPrompts({
               </button>
               {busy ? <span className="permission-busy">Sending…</span> : null}
             </div>
+            <p className="permission-scope">
+              Allow once permits a single action; Always permits it for the
+              rest of this session; Reject stops this action.
+            </p>
           </section>
         );
       })}

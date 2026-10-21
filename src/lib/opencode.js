@@ -1096,6 +1096,24 @@ export function createOpenCodeApi(client = opencode) {
       return terminal;
     },
 
+    async listProjectTerminals(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.pty.list(
+            { directory: scope },
+            { signal: requestSignal },
+          ),
+        "Terminal sessions could not be loaded.",
+        signal,
+      );
+
+      return requireArray(data)
+        .map((row) => normalizePtyInfo(row, scope))
+        .filter(Boolean);
+    },
+
     async resizeProjectTerminal(directory, ptyID, size, signal) {
       const scope = validateProjectDirectory(directory);
       const id = validatePtyId(ptyID);
@@ -1498,6 +1516,9 @@ export const runProjectShell = (directory, sessionID, options, signal) =>
 
 export const createProjectTerminal = (directory, options, signal) =>
   opencodeApi.createProjectTerminal(directory, options, signal);
+
+export const listProjectTerminals = (directory, signal) =>
+  opencodeApi.listProjectTerminals(directory, signal);
 
 export const resizeProjectTerminal = (directory, ptyID, size, signal) =>
   opencodeApi.resizeProjectTerminal(directory, ptyID, size, signal);

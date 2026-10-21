@@ -1,16 +1,62 @@
+import { useMemo, useState } from "react";
 import { projectLabel } from "../lib/project";
+import { parseUnifiedPatch } from "../lib/diff";
 import {
   patchForFile,
   summarizeDiffs,
 } from "../lib/workspace";
+
+function SideBySideDiff({ patch }) {
+  const hunks = useMemo(() => parseUnifiedPatch(patch), [patch]);
+
+  if (hunks.length === 0) {
+    return <pre className="diff-patch">{patch}</pre>;
+  }
+
+  return (
+    <div className="diff-split">
+      {hunks.map((hunk, hunkIndex) => (
+        <div className="diff-hunk" key={`${hunk.oldStart}-${hunk.newStart}-${hunkIndex}`}>
+          {hunk.context ? (
+            <div className="diff-hunk-head">
+              @@ -{hunk.oldStart} +{hunk.newStart} @@ {hunk.context}
+            </div>
+          ) : null}
+          <table className="diff-side">
+            <tbody>
+              {hunk.rows.map((row, rowIndex) => (
+                <tr key={`${rowIndex}-${row.kind}`} className={`diff-row diff-${row.kind}`}>
+                  <td className="diff-num">{row.left ? row.left.no : ""}</td>
+                  <td className="diff-cell">
+                    {row.left
+                      ? `${row.kind === "change" || row.kind === "remove" ? "-" : " "}${row.left.text}`
+                      : ""}
+                  </td>
+                  <td className="diff-num">{row.right ? row.right.no : ""}</td>
+                  <td className="diff-cell">
+                    {row.right
+                      ? `${row.kind === "change" || row.kind === "add" ? "+" : " "}${row.right.text}`
+                      : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function ChangesView({
   changes,
   onRefresh,
   connected,
   project,
+  onOpenFile,
 }) {
   const summary = summarizeDiffs(changes.files);
+  const [viewMode, setViewMode] = useState("split");
 
   return (
     <section className="page-view" aria-labelledby="changes-heading">
@@ -43,6 +89,24 @@ export function ChangesView({
         <div className="diff-totals">
           <span className="additions">+{summary.additions}</span>
           <span className="deletions">−{summary.deletions}</span>
+        </div>
+        <div className="diff-view-toggle" role="group" aria-label="Diff view mode">
+          <button
+            type="button"
+            className={`filter-button compact-button${viewMode === "split" ? " active" : ""}`}
+            aria-pressed={viewMode === "split"}
+            onClick={() => setViewMode("split")}
+          >
+            Side by side
+          </button>
+          <button
+            type="button"
+            className={`filter-button compact-button${viewMode === "unified" ? " active" : ""}`}
+            aria-pressed={viewMode === "unified"}
+            onClick={() => setViewMode("unified")}
+          >
+            Unified
+          </button>
         </div>
       </div>
 
@@ -113,8 +177,23 @@ export function ChangesView({
                     </span>
                   </span>
                 </summary>
+                <div className="diff-file-actions">
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    onClick={() => onOpenFile?.(path)}
+                    disabled={!connected}
+                    title="Open this file in the editor"
+                  >
+                    Open file
+                  </button>
+                </div>
                 {patch ? (
-                  <pre className="diff-patch">{patch}</pre>
+                  viewMode === "split" ? (
+                    <SideBySideDiff patch={patch} />
+                  ) : (
+                    <pre className="diff-patch">{patch}</pre>
+                  )
                 ) : (
                   <p className="panel-note">
                     No patch was returned for this file.
