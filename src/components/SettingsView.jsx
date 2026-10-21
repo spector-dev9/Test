@@ -378,7 +378,7 @@ export function SettingsView({
   }
 
   return (
-    <section className="page-view" aria-labelledby="settings-heading">
+    <section className="page-view settings-view" aria-labelledby="settings-heading">
       <div className="page-heading">
         <div>
           <p className="eyebrow">WORKSPACE</p>
@@ -471,452 +471,454 @@ export function SettingsView({
         </section>
       </div>
 
-      <div className="panel settings-card">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">APPEARANCE</span>
-            <h2>Comfort and layout</h2>
-          </div>
-        </div>
-
-        <div className="appearance-list">
-          <label className="appearance-row appearance-row-toggle">
-            <span className="appearance-copy">
-              <strong>Reduce motion</strong>
-              <small>Cuts animations and pulsing effects across the app.</small>
-            </span>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={prefs.reducedMotion}
-              onChange={(event) =>
-                onChangeUiPref("reducedMotion", event.target.checked)
-              }
-            />
-          </label>
-
-          <label className="appearance-row">
-            <span className="appearance-copy">
-              <strong>Text size</strong>
-              <small>Scales the whole interface.</small>
-            </span>
-            <input
-              type="range"
-              min={UI_PREF_LIMITS.fontScale.min}
-              max={UI_PREF_LIMITS.fontScale.max}
-              step={UI_PREF_LIMITS.fontScale.step}
-              value={prefs.fontScale}
-              onChange={(event) =>
-                onChangeUiPref("fontScale", Number(event.target.value))
-              }
-              aria-label="Interface text size"
-            />
-            <output className="appearance-value">{prefs.fontScale}%</output>
-          </label>
-
-          <label className="appearance-row">
-            <span className="appearance-copy">
-              <strong>Terminal font</strong>
-              <small>Text size in the interactive shell.</small>
-            </span>
-            <input
-              type="range"
-              min={UI_PREF_LIMITS.terminalFontSize.min}
-              max={UI_PREF_LIMITS.terminalFontSize.max}
-              step={UI_PREF_LIMITS.terminalFontSize.step}
-              value={prefs.terminalFontSize}
-              onChange={(event) =>
-                onChangeUiPref("terminalFontSize", Number(event.target.value))
-              }
-              aria-label="Terminal font size"
-            />
-            <output className="appearance-value">
-              {prefs.terminalFontSize}px
-            </output>
-          </label>
-
-          <label className="appearance-row">
-            <span className="appearance-copy">
-              <strong>Editor font</strong>
-              <small>Text size in the file editor and preview.</small>
-            </span>
-            <input
-              type="range"
-              min={UI_PREF_LIMITS.editorFontSize.min}
-              max={UI_PREF_LIMITS.editorFontSize.max}
-              step={UI_PREF_LIMITS.editorFontSize.step}
-              value={prefs.editorFontSize}
-              onChange={(event) =>
-                onChangeUiPref("editorFontSize", Number(event.target.value))
-              }
-              aria-label="Editor font size"
-            />
-            <output className="appearance-value">
-              {prefs.editorFontSize}px
-            </output>
-          </label>
-        </div>
-
-        <p className="panel-note">
-          Preferences are stored on this device only. The terminal and editor
-          sizes are applied live without restarting the session.
-        </p>
-      </div>
-
-      {native && isSessionTransferSupported() ? (
-        <div className="panel settings-card">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">SESSIONS</span>
-              <h2>Import and export</h2>
+      <div className="settings-stack">
+          <div className="panel settings-card">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">APPEARANCE</span>
+                <h2>Comfort and layout</h2>
+              </div>
             </div>
+
+          <div className="appearance-list">
+            <label className="appearance-row appearance-row-toggle">
+              <span className="appearance-copy">
+                <strong>Reduce motion</strong>
+                <small>Cuts animations and pulsing effects across the app.</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={prefs.reducedMotion}
+                onChange={(event) =>
+                  onChangeUiPref("reducedMotion", event.target.checked)
+                }
+              />
+            </label>
+
+            <label className="appearance-row">
+              <span className="appearance-copy">
+                <strong>Text size</strong>
+                <small>Scales the whole interface.</small>
+              </span>
+              <input
+                type="range"
+                min={UI_PREF_LIMITS.fontScale.min}
+                max={UI_PREF_LIMITS.fontScale.max}
+                step={UI_PREF_LIMITS.fontScale.step}
+                value={prefs.fontScale}
+                onChange={(event) =>
+                  onChangeUiPref("fontScale", Number(event.target.value))
+                }
+                aria-label="Interface text size"
+              />
+              <output className="appearance-value">{prefs.fontScale}%</output>
+            </label>
+
+            <label className="appearance-row">
+              <span className="appearance-copy">
+                <strong>Terminal font</strong>
+                <small>Text size in the interactive shell.</small>
+              </span>
+              <input
+                type="range"
+                min={UI_PREF_LIMITS.terminalFontSize.min}
+                max={UI_PREF_LIMITS.terminalFontSize.max}
+                step={UI_PREF_LIMITS.terminalFontSize.step}
+                value={prefs.terminalFontSize}
+                onChange={(event) =>
+                  onChangeUiPref("terminalFontSize", Number(event.target.value))
+                }
+                aria-label="Terminal font size"
+              />
+              <output className="appearance-value">
+                {prefs.terminalFontSize}px
+              </output>
+            </label>
+
+            <label className="appearance-row">
+              <span className="appearance-copy">
+                <strong>Editor font</strong>
+                <small>Text size in the file editor and preview.</small>
+              </span>
+              <input
+                type="range"
+                min={UI_PREF_LIMITS.editorFontSize.min}
+                max={UI_PREF_LIMITS.editorFontSize.max}
+                step={UI_PREF_LIMITS.editorFontSize.step}
+                value={prefs.editorFontSize}
+                onChange={(event) =>
+                  onChangeUiPref("editorFontSize", Number(event.target.value))
+                }
+                aria-label="Editor font size"
+              />
+              <output className="appearance-value">
+                {prefs.editorFontSize}px
+              </output>
+            </label>
           </div>
-
-          {sessionOptions.length > 0 ? (
-            <>
-              <label
-                className="appearance-copy"
-                htmlFor="session-transfer-select"
-              >
-                <strong>Session to export</strong>
-                <small>
-                  Saves the conversation as OpenCode JSON, the same format the
-                  opencode export command produces.
-                </small>
-              </label>
-              <select
-                id="session-transfer-select"
-                className="linux-input-field session-transfer-select"
-                value={effectiveTransferId}
-                onChange={(event) => setTransferSessionId(event.target.value)}
-              >
-                {sessionOptions.map((session) => (
-                  <option key={session.id} value={session.id}>
-                    {session.title || session.slug || session.id}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <p className="panel-note">No sessions to export yet.</p>
-          )}
-
-          <div className="settings-runtime-actions">
-            <button
-              type="button"
-              className="primary-button"
-              onClick={exportSelectedSession}
-              disabled={Boolean(transferBusy) || !effectiveTransferId}
-            >
-              {transferBusy === "export" ? "Exporting…" : "Export session"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={importSessionFile}
-              disabled={Boolean(transferBusy)}
-            >
-              {transferBusy === "import" ? "Importing…" : "Import session"}
-            </button>
-          </div>
-
-          {transferStatus ? (
-            <p
-              className="panel-note"
-              role={transferStatus.error ? "alert" : "status"}
-            >
-              {transferStatus.text}
-            </p>
-          ) : null}
 
           <p className="panel-note">
-            Export opens the system file saver; import opens a JSON file
-            created by export. Files are read and written on this device only.
+            Preferences are stored on this device only. The terminal and editor
+            sizes are applied live without restarting the session.
           </p>
         </div>
-      ) : null}
 
-      {native ? (
-        <div className="panel settings-card">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">DEVICE STORAGE</span>
-              <h2>Workspace folders</h2>
+        {native && isSessionTransferSupported() ? (
+          <div className="panel settings-card">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">SESSIONS</span>
+                <h2>Import and export</h2>
+              </div>
             </div>
-            <span
-              className={`status-chip ${storage?.allFiles ? "online" : "offline"}`}
-            >
-              <span
-                className={`dot ${storage?.allFiles ? "online" : "offline"}`}
-              />
-              {storage
-                ? storage.allFiles
-                  ? "Allowed"
-                  : "Not allowed"
-                : storageSupported
-                  ? "Checking"
-                  : "Unsupported"}
-            </span>
-          </div>
 
-          <dl className="detail-list">
-            <DetailRow label="All files access">
-              {storage
-                ? storage.allFiles
-                  ? `Allowed (Android API ${storage.sdk})`
-                  : `Not allowed (Android API ${storage.sdk})`
-                : storageSupported
-                  ? "Checking…"
-                  : "Unavailable in this build"}
-            </DetailRow>
-            <DetailRow label="Active workspace">
-              <code>{workspaceDirectory ?? PROJECT_DIRECTORY}</code>
-            </DetailRow>
-          </dl>
+            {sessionOptions.length > 0 ? (
+              <>
+                <label
+                  className="appearance-copy"
+                  htmlFor="session-transfer-select"
+                >
+                  <strong>Session to export</strong>
+                  <small>
+                    Saves the conversation as OpenCode JSON, the same format the
+                    opencode export command produces.
+                  </small>
+                </label>
+                <select
+                  id="session-transfer-select"
+                  className="linux-input-field session-transfer-select"
+                  value={effectiveTransferId}
+                  onChange={(event) => setTransferSessionId(event.target.value)}
+                >
+                  {sessionOptions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.title || session.slug || session.id}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <p className="panel-note">No sessions to export yet.</p>
+            )}
 
-          <div className="settings-runtime-actions">
-            {!storage?.allFiles ? (
+            <div className="settings-runtime-actions">
               <button
                 type="button"
                 className="primary-button"
-                onClick={allowStorage}
+                onClick={exportSelectedSession}
+                disabled={Boolean(transferBusy) || !effectiveTransferId}
+              >
+                {transferBusy === "export" ? "Exporting…" : "Export session"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={importSessionFile}
+                disabled={Boolean(transferBusy)}
+              >
+                {transferBusy === "import" ? "Importing…" : "Import session"}
+              </button>
+            </div>
+
+            {transferStatus ? (
+              <p
+                className="panel-note"
+                role={transferStatus.error ? "alert" : "status"}
+              >
+                {transferStatus.text}
+              </p>
+            ) : null}
+
+            <p className="panel-note">
+              Export opens the system file saver; import opens a JSON file
+              created by export. Files are read and written on this device only.
+            </p>
+          </div>
+        ) : null}
+
+        {native ? (
+          <div className="panel settings-card">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">DEVICE STORAGE</span>
+                <h2>Workspace folders</h2>
+              </div>
+              <span
+                className={`status-chip ${storage?.allFiles ? "online" : "offline"}`}
+              >
+                <span
+                  className={`dot ${storage?.allFiles ? "online" : "offline"}`}
+                />
+                {storage
+                  ? storage.allFiles
+                    ? "Allowed"
+                    : "Not allowed"
+                  : storageSupported
+                    ? "Checking"
+                    : "Unsupported"}
+              </span>
+            </div>
+
+            <dl className="detail-list">
+              <DetailRow label="All files access">
+                {storage
+                  ? storage.allFiles
+                    ? `Allowed (Android API ${storage.sdk})`
+                    : `Not allowed (Android API ${storage.sdk})`
+                  : storageSupported
+                    ? "Checking…"
+                    : "Unavailable in this build"}
+              </DetailRow>
+              <DetailRow label="Active workspace">
+                <code>{workspaceDirectory ?? PROJECT_DIRECTORY}</code>
+              </DetailRow>
+            </dl>
+
+            <div className="settings-runtime-actions">
+              {!storage?.allFiles ? (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={allowStorage}
+                  disabled={storageBusy || !storageSupported}
+                >
+                  Allow all files access
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={chooseWorkspace}
                 disabled={storageBusy || !storageSupported}
               >
-                Allow all files access
+                {storageBusy ? "Opening…" : "Choose folder"}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={chooseWorkspace}
-              disabled={storageBusy || !storageSupported}
-            >
-              {storageBusy ? "Opening…" : "Choose folder"}
-            </button>
-            {workspaceDirectory ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => onSelectWorkspace(PROJECT_DIRECTORY)}
-                disabled={storageBusy}
-              >
-                Use app workspace
-              </button>
-            ) : null}
-          </div>
+              {workspaceDirectory ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onSelectWorkspace(PROJECT_DIRECTORY)}
+                  disabled={storageBusy}
+                >
+                  Use app workspace
+                </button>
+              ) : null}
+            </div>
 
-          {storageError ? (
-            <p className="panel-note" role="alert">
-              {storageError}
+            {storageError ? (
+              <p className="panel-note" role="alert">
+                {storageError}
+              </p>
+            ) : null}
+
+            <p className="panel-note">
+              All-files access lets the OpenCode runtime and terminal read folders
+              outside the app sandbox. The folder picker supports internal storage
+              and SD card paths; cloud providers without filesystem paths cannot
+              be used as a workspace.
             </p>
-          ) : null}
-
-          <p className="panel-note">
-            All-files access lets the OpenCode runtime and terminal read folders
-            outside the app sandbox. The folder picker supports internal storage
-            and SD card paths; cloud providers without filesystem paths cannot
-            be used as a workspace.
-          </p>
-        </div>
-      ) : null}
-
-      {native && project ? (
-        <GitHubCard
-          key={project.worktree}
-          directory={project.worktree}
-          connected={connected}
-          workspaceDirectory={workspaceDirectory}
-          onSelectWorkspace={onSelectWorkspace}
-          onProjectsChanged={onProjectsChanged}
-          onProvidersChanged={onProvidersChanged}
-        />
-      ) : null}
-
-      {native ? (
-        <div className="panel settings-card">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">LOCAL RUNTIME</span>
-              <h2>OpenCode on this device</h2>
-            </div>
-            <span className={`status-chip ${runtimeState.tone}`}>
-              <span className={`dot ${runtimeState.tone}`} />
-              {runtimeState.label}
-            </span>
           </div>
+        ) : null}
 
-          <dl className="detail-list">
-            <DetailRow label="Status">
-              {runtime?.message || "No local runtime has started yet."}
-            </DetailRow>
-            <DetailRow label="Runtime version">
-              {runtime?.version ? `v${runtime.version}` : "Not installed"}
-            </DetailRow>
-            <DetailRow label="Server URL">
-              <code>{OPENCODE_BASE_URL}</code>
-            </DetailRow>
-            <DetailRow label="Workspace">
-              <code>
-                {runtime?.workspace || projectPathLabel(project)}
-              </code>
-            </DetailRow>
-          </dl>
+        {native && project ? (
+          <GitHubCard
+            key={project.worktree}
+            directory={project.worktree}
+            connected={connected}
+            workspaceDirectory={workspaceDirectory}
+            onSelectWorkspace={onSelectWorkspace}
+            onProjectsChanged={onProjectsChanged}
+            onProvidersChanged={onProvidersChanged}
+          />
+        ) : null}
 
-          {runtimeBusy ? (
-            <div
-              className="settings-progress"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={runtime.progress}
-              aria-label="Runtime setup progress"
-            >
-              <span style={{ width: `${Math.max(2, runtime.progress)}%` }} />
+        {native ? (
+          <div className="panel settings-card">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">LOCAL RUNTIME</span>
+                <h2>OpenCode on this device</h2>
+              </div>
+              <span className={`status-chip ${runtimeState.tone}`}>
+                <span className={`dot ${runtimeState.tone}`} />
+                {runtimeState.label}
+              </span>
             </div>
-          ) : null}
 
-          {runtime?.error ? (
-            <p className="panel-note">{runtime.error}</p>
-          ) : null}
+            <dl className="detail-list">
+              <DetailRow label="Status">
+                {runtime?.message || "No local runtime has started yet."}
+              </DetailRow>
+              <DetailRow label="Runtime version">
+                {runtime?.version ? `v${runtime.version}` : "Not installed"}
+              </DetailRow>
+              <DetailRow label="Server URL">
+                <code>{OPENCODE_BASE_URL}</code>
+              </DetailRow>
+              <DetailRow label="Workspace">
+                <code>
+                  {runtime?.workspace || projectPathLabel(project)}
+                </code>
+              </DetailRow>
+            </dl>
 
-          <div className="settings-runtime-actions">
-            {runtime?.state === "running" ? (
+            {runtimeBusy ? (
+              <div
+                className="settings-progress"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={runtime.progress}
+                aria-label="Runtime setup progress"
+              >
+                <span style={{ width: `${Math.max(2, runtime.progress)}%` }} />
+              </div>
+            ) : null}
+
+            {runtime?.error ? (
+              <p className="panel-note">{runtime.error}</p>
+            ) : null}
+
+            <div className="settings-runtime-actions">
+              {runtime?.state === "running" ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={runtime.stop}
+                >
+                  Stop server
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={runtime?.retry}
+                  disabled={runtimeBusy || !runtime}
+                >
+                  {runtime?.state === "error" ? "Try again" : "Start runtime"}
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary-button"
-                onClick={runtime.stop}
+                onClick={runtime?.restart}
+                disabled={runtimeBusy || !runtime}
               >
-                Stop server
+                Restart
               </button>
-            ) : (
+              <button
+                type="button"
+                className="danger-button"
+                onClick={repairRuntime}
+                disabled={runtimeBusy || !runtime}
+              >
+                Repair runtime
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={showLogs}
+                disabled={logsBusy || !runtime}
+              >
+                {logs ? "Hide logs" : logsBusy ? "Reading…" : "Server logs"}
+              </button>
+            </div>
+
+            {logs ? <pre className="settings-log">{logs}</pre> : null}
+
+            <p className="panel-note">
+              The runtime and workspace live in app-private storage. Provider
+              credentials are only stored in that local runtime; this app does
+              not read credentials from outside its sandbox.
+            </p>
+          </div>
+        ) : null}
+
+        {native ? (
+          <div className="panel settings-card">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">LINUX ENVIRONMENT</span>
+                <h2>Rootless Linux userspace</h2>
+              </div>
+              <span className={`status-chip ${linuxReady ? "online" : "offline"}`}>
+                <span className={`dot ${linuxReady ? "online" : "offline"}`} />
+                {linuxReady ? "Ready" : "Not ready"}
+              </span>
+            </div>
+            <dl className="detail-list">
+              <DetailRow label="Rootfs">
+                <code>{rootfsPath || "Not extracted"}</code>
+              </DetailRow>
+            </dl>
+            <div className="settings-runtime-actions">
               <button
                 type="button"
                 className="primary-button"
-                onClick={runtime?.retry}
-                disabled={runtimeBusy || !runtime}
+                onClick={ensureLinux}
+                disabled={linuxBusy || !native}
               >
-                {runtime?.state === "error" ? "Try again" : "Start runtime"}
+                {linuxBusy ? "Preparing…" : "Ensure Linux"}
               </button>
-            )}
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={runtime?.restart}
-              disabled={runtimeBusy || !runtime}
-            >
-              Restart
-            </button>
-            <button
-              type="button"
-              className="danger-button"
-              onClick={repairRuntime}
-              disabled={runtimeBusy || !runtime}
-            >
-              Repair runtime
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={showLogs}
-              disabled={logsBusy || !runtime}
-            >
-              {logs ? "Hide logs" : logsBusy ? "Reading…" : "Server logs"}
-            </button>
+              <input
+                className="linux-input-field"
+                value={linuxPkg}
+                onChange={(event) => setLinuxPkg(event.target.value)}
+                placeholder="apk package (e.g. python3, nodejs)"
+                aria-label="apk package name"
+                disabled={linuxBusy || !linuxReady}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={installLinux}
+                disabled={linuxBusy || !linuxReady || !linuxPkg.trim()}
+              >
+                Install
+              </button>
+            </div>
+            {linuxOutput ? (
+              <pre className="settings-log">{linuxOutput}</pre>
+            ) : null}
+            <p className="panel-note">
+              Downloads an Alpine aarch64 rootfs and a static proot binary into
+              app-private storage. Commands and packages run in a userspace
+              chroot (no root required). The first launch downloads both over
+              your network.
+            </p>
           </div>
+        ) : null}
 
-          {logs ? <pre className="settings-log">{logs}</pre> : null}
-
-          <p className="panel-note">
-            The runtime and workspace live in app-private storage. Provider
-            credentials are only stored in that local runtime; this app does
-            not read credentials from outside its sandbox.
-          </p>
-        </div>
-      ) : null}
-
-      {native ? (
-        <div className="panel settings-card">
+        <div className="panel settings-card diagnostics-card">
           <div className="panel-heading">
             <div>
-              <span className="panel-kicker">LINUX ENVIRONMENT</span>
-              <h2>Rootless Linux userspace</h2>
+              <span className="panel-kicker">DIAGNOSTICS</span>
+              <h2>What this app can access</h2>
             </div>
-            <span className={`status-chip ${linuxReady ? "online" : "offline"}`}>
-              <span className={`dot ${linuxReady ? "online" : "offline"}`} />
-              {linuxReady ? "Ready" : "Not ready"}
-            </span>
-          </div>
-          <dl className="detail-list">
-            <DetailRow label="Rootfs">
-              <code>{rootfsPath || "Not extracted"}</code>
-            </DetailRow>
-          </dl>
-          <div className="settings-runtime-actions">
             <button
               type="button"
-              className="primary-button"
-              onClick={ensureLinux}
-              disabled={linuxBusy || !native}
+              className="secondary-button compact-button"
+              onClick={copyDiagnostics}
             >
-              {linuxBusy ? "Preparing…" : "Ensure Linux"}
-            </button>
-            <input
-              className="linux-input-field"
-              value={linuxPkg}
-              onChange={(event) => setLinuxPkg(event.target.value)}
-              placeholder="apk package (e.g. python3, nodejs)"
-              aria-label="apk package name"
-              disabled={linuxBusy || !linuxReady}
-            />
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={installLinux}
-              disabled={linuxBusy || !linuxReady || !linuxPkg.trim()}
-            >
-              Install
+              {diagnosticsCopied ? "Copied" : "Copy report"}
             </button>
           </div>
-          {linuxOutput ? (
-            <pre className="settings-log">{linuxOutput}</pre>
-          ) : null}
+          <ul className="settings-list">
+            <li>Health, project discovery, and scoped session lists</li>
+            <li>Session messages, prompts, commands, and abort requests</li>
+            <li>Rename, archive, restore, and permanent session deletion</li>
+            <li>Pending permission requests and explicit replies</li>
+            <li>Configured models, project commands, and VCS data</li>
+            <li>GitHub Copilot sign-in and HTTPS repository clone and push</li>
+          </ul>
           <p className="panel-note">
-            Downloads an Alpine aarch64 rootfs and a static proot binary into
-            app-private storage. Commands and packages run in a userspace
-            chroot (no root required). The first launch downloads both over
-            your network.
+            The app does not read your OpenCode credentials, bypass provider
+            policy, or automatically approve agent actions. Permission prompts
+            require an explicit response. Conversations refresh by polling
+            because the native HTTP bridge does not expose server-sent events.
           </p>
         </div>
-      ) : null}
-
-      <div className="panel settings-card diagnostics-card">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">DIAGNOSTICS</span>
-            <h2>What this app can access</h2>
-          </div>
-          <button
-            type="button"
-            className="secondary-button compact-button"
-            onClick={copyDiagnostics}
-          >
-            {diagnosticsCopied ? "Copied" : "Copy report"}
-          </button>
-        </div>
-        <ul className="settings-list">
-          <li>Health, project discovery, and scoped session lists</li>
-          <li>Session messages, prompts, commands, and abort requests</li>
-          <li>Rename, archive, restore, and permanent session deletion</li>
-          <li>Pending permission requests and explicit replies</li>
-          <li>Configured models, project commands, and VCS data</li>
-          <li>GitHub Copilot sign-in and HTTPS repository clone and push</li>
-        </ul>
-        <p className="panel-note">
-          The app does not read your OpenCode credentials, bypass provider
-          policy, or automatically approve agent actions. Permission prompts
-          require an explicit response. Conversations refresh by polling
-          because the native HTTP bridge does not expose server-sent events.
-        </p>
       </div>
     </section>
   );

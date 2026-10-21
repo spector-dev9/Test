@@ -158,8 +158,9 @@ public class LinuxEnvironment extends Plugin {
 
     private boolean hasRootfs() {
         File rootfs = rootfsPath();
-        return rootfs.isDirectory() && new File(rootfs, "bin/sh").isFile()
-            && new File(rootfs, "usr/bin/env").isFile();
+        return rootfs.isDirectory()
+            && entryExists(new File(rootfs, "bin/sh"))
+            && entryExists(new File(rootfs, "usr/bin/env"));
     }
 
     private File rootfsPath() {
@@ -196,8 +197,11 @@ public class LinuxEnvironment extends Plugin {
         try {
             extract(archive, staging);
 
-            File sh = new File(staging, "bin/sh");
-            if (!sh.isFile()) {
+            // Alpine's /bin/sh and /usr/bin/env are absolute symlinks to
+            // /bin/busybox, so they are intentionally dangling outside proot:
+            // check the links themselves instead of following them.
+            if (!entryExists(new File(staging, "bin/sh"))
+                || !entryExists(new File(staging, "usr/bin/env"))) {
                 throw new IOException("The rootfs archive does not contain /bin/sh.");
             }
 
@@ -442,6 +446,15 @@ public class LinuxEnvironment extends Plugin {
             } else {
                 target.setReadable(true, false);
             }
+        }
+    }
+
+    private static boolean entryExists(File file) {
+        try {
+            Os.lstat(file.getAbsolutePath());
+            return true;
+        } catch (ErrnoException failure) {
+            return false;
         }
     }
 

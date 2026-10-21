@@ -536,7 +536,11 @@ export function ChatView({
             ) : null}
 
             {rows.length > 0 ? (
-              <MessageList messages={rows} phase={phase} />
+              <MessageList
+                messages={rows}
+                phase={phase}
+                resetKey={session?.id}
+              />
             ) : null}
           </section>
         )}

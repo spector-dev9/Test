@@ -6783,3 +6783,94 @@ html[data-reduce-motion="true"] *::after {
   font-family: inherit;
   font-size: 12px;
 }
+
+/* Settings: breathing room between sections and controls */
+.settings-view {
+  padding: 26px 22px max(34px, env(safe-area-inset-bottom));
+}
+
+.settings-view .settings-grid {
+  gap: 14px;
+  margin-bottom: 0;
+}
+
+.settings-stack {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.settings-card {
+  padding: 18px;
+}
+
+.settings-card .panel-kicker {
+  margin-bottom: 8px;
+}
+
+.settings-card h2 {
+  margin-bottom: 12px;
+}
+
+.settings-card .detail-row {
+  padding: 9px 0;
+  font-size: 11.5px;
+}
+
+.settings-card .settings-runtime-actions {
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.settings-card .settings-runtime-actions .primary-button,
+.settings-card .settings-runtime-actions .secondary-button,
+.settings-card .settings-runtime-actions .danger-button {
+  min-height: 38px;
+  padding: 9px 13px;
+  font-size: 11.5px;
+}
+
+.settings-card .panel-note {
+  margin-top: 12px;
+  line-height: 1.6;
+}
+
+.settings-card .appearance-row {
+  padding: 13px 4px;
+}
+
+.message-window-controls {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 14px;
+}
+
+.message-window-controls .secondary-button {
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .settings-stack,
+  .settings-view .settings-grid {
+    gap: 12px;
+    margin-top: 12px;
+  }
+}
+
+@media (max-width: 650px) {
+  .settings-view {
+    padding: 20px 14px max(26px, env(safe-area-inset-bottom));
+  }
+
+  .settings-card {
+    padding: 15px;
+  }
+
+  .settings-card h2 {
+    margin-bottom: 10px;
+  }
+
+  .settings-card .settings-runtime-actions {
+    gap: 8px;
+  }
+}

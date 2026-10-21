@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Browser } from "@capacitor/browser";
 import { CopyButton } from "./CopyButton";
 import { MarkdownText } from "./Markdown";
@@ -73,10 +74,45 @@ function MessageText({ text }) {
   );
 }
 
-export function MessageList({ messages, phase }) {
+const INITIAL_MESSAGE_WINDOW = 30;
+const MESSAGE_WINDOW_PAGE = 30;
+
+export function MessageList({ messages, phase, resetKey }) {
+  const [windowState, setWindowState] = useState({
+    key: resetKey,
+    count: INITIAL_MESSAGE_WINDOW,
+  });
+  const visibleCount =
+    windowState.key === resetKey
+      ? windowState.count
+      : INITIAL_MESSAGE_WINDOW;
+  const hiddenCount = Math.max(0, messages.length - visibleCount);
+  const visibleMessages =
+    hiddenCount > 0 ? messages.slice(hiddenCount) : messages;
+
   return (
     <div className="message-list">
-      {messages.map((message) => (
+      {hiddenCount > 0 ? (
+        <div className="message-window-controls">
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={() =>
+              setWindowState({
+                key: resetKey,
+                count: visibleCount + MESSAGE_WINDOW_PAGE,
+              })
+            }
+          >
+            Show {Math.min(hiddenCount, MESSAGE_WINDOW_PAGE)} earlier messages
+            {hiddenCount > MESSAGE_WINDOW_PAGE
+              ? ` (${hiddenCount} hidden)`
+              : ""}
+          </button>
+        </div>
+      ) : null}
+
+      {visibleMessages.map((message) => (
         <article
           className={`message message-${message.role}`}
           key={message.id}
