@@ -575,9 +575,10 @@ export function SettingsView({
             <pre className="settings-log">{linuxOutput}</pre>
           ) : null}
           <p className="panel-note">
-            Downloads and extracts an Alpine aarch64 rootfs into app-private
-            storage. Commands run inside that userspace. The first launch
-            downloads the rootfs over your network.
+            Downloads an Alpine aarch64 rootfs and a static proot binary into
+            app-private storage. Commands and packages run in a userspace
+            chroot (no root required). The first launch downloads both over
+            your network.
           </p>
         </div>
       ) : null}

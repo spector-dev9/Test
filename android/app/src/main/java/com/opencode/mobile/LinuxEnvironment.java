@@ -1,6 +1,8 @@
 package com.opencode.mobile;
 
-import android.content.Context;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import com.getcapacitor.JSObject;
@@ -19,9 +21,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,11 +43,19 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 public class LinuxEnvironment extends Plugin {
     private static final String TAG = "LinuxEnvironment";
     private static final String ROOTFS_RELATIVE = "linux/rootfs";
+    private static final String PROOT_RELATIVE = "linux/bin/proot";
     private static final String MARKER_READY = ".ready";
     // Official Alpine aarch64 minirootfs mirror. Change this constant if the mirror/path moves.
     private static final String ALPINE_ROOTFS_URL =
         "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz";
+    // Static Termux-based proot with an embedded ELF loader (skirsten builds). Verified on device.
+    private static final String PROOT_URL =
+        "https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot";
+    private static final String PROOT_SHA256 =
+        "c902f35b3bce4013d2e78e3bf360b606523d55ab7b907578938577b243bfca38";
+    private static final String RESOLV_CONF = "nameserver 1.1.1.1\nnameserver 8.8.8.8\n";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
+    private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final OkHttpClient client = new OkHttpClient.Builder()
@@ -71,9 +82,13 @@ public class LinuxEnvironment extends Plugin {
         executor.execute(() -> {
             try {
                 File rootfs = ensureRootfs();
+                ensureProot();
+                writeResolv(rootfs);
+                writeText(new File(rootfs, MARKER_READY), "1\n");
                 JSObject result = new JSObject();
                 result.put("ready", true);
                 result.put("rootfsPath", rootfs.getAbsolutePath());
+                result.put("prootPath", prootPath().getAbsolutePath());
                 finish(call, result);
             } catch (Exception failure) {
                 reject(call, failure, null);
@@ -137,23 +152,38 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private boolean isLinuxReady() {
+        return hasRootfs() && prootPath().isFile()
+            && new File(rootfsPath(), MARKER_READY).isFile();
+    }
+
+    private boolean hasRootfs() {
         File rootfs = rootfsPath();
         return rootfs.isDirectory() && new File(rootfs, "bin/sh").isFile()
-            && new File(rootfs, MARKER_READY).isFile();
+            && new File(rootfs, "usr/bin/env").isFile();
     }
 
     private File rootfsPath() {
         return new File(getContext().getFilesDir(), ROOTFS_RELATIVE);
     }
 
+    private File prootPath() {
+        return new File(getContext().getFilesDir(), PROOT_RELATIVE);
+    }
+
+    private File prootTmpDir() {
+        File directory = new File(getContext().getCacheDir(), "proot");
+        mkdirs(directory);
+        return directory;
+    }
+
     private File ensureRootfs() throws Exception {
         File rootfs = rootfsPath();
-        if (isLinuxReady()) {
+        if (hasRootfs()) {
             return rootfs;
         }
 
         File archive = new File(getContext().getCacheDir(), "alpine-minirootfs.tar.gz");
-        download(ALPINE_ROOTFS_URL, archive);
+        download(ALPINE_ROOTFS_URL, archive, "rootfs archive");
 
         File staging = new File(getContext().getFilesDir(), "linux-staging");
         deleteRecursively(staging);
@@ -170,27 +200,89 @@ public class LinuxEnvironment extends Plugin {
         if (!staging.renameTo(rootfs)) {
             throw new IOException("The Linux rootfs could not be activated.");
         }
-        writeText(new File(rootfs, MARKER_READY), "1\n");
+        archive.delete();
+        writeResolv(rootfs);
         return rootfs;
+    }
+
+    private void ensureProot() throws Exception {
+        File proot = prootPath();
+        if (proot.isFile() && proot.canExecute()) {
+            return;
+        }
+
+        File archive = new File(getContext().getCacheDir(), "proot.aarch64");
+        download(PROOT_URL, archive, "proot binary");
+        verifySha256(archive, PROOT_SHA256);
+
+        File parent = proot.getParentFile();
+        mkdirs(parent);
+        deleteRecursively(proot);
+        if (!archive.renameTo(proot)) {
+            throw new IOException("The proot binary could not be installed.");
+        }
+        proot.setExecutable(true, false);
+        proot.setReadable(true, false);
+        archive.delete();
+    }
+
+    private void writeResolv(File rootfs) throws IOException {
+        File resolv = new File(rootfs, "etc/resolv.conf");
+        if (resolv.isFile()) {
+            return;
+        }
+        writeText(resolv, RESOLV_CONF);
     }
 
     private ProcessResult runLinuxCommand(String command) throws Exception {
         File rootfs = rootfsPath();
-        List<String> cmd = new ArrayList<>();
-        cmd.add(new File(rootfs, "bin/sh").getAbsolutePath());
-        cmd.add("-c");
-        cmd.add(command);
+        File proot = prootPath();
+        writeResolv(rootfs);
 
-        ProcessBuilder builder = new ProcessBuilder(cmd);
+        List<String> argv = new ArrayList<>();
+        argv.add(proot.getAbsolutePath());
+        argv.add("-0");
+        argv.add("-r");
+        argv.add(rootfs.getAbsolutePath() + "/");
+        argv.add("-b");
+        argv.add("/dev/");
+        argv.add("-b");
+        argv.add("/sys/");
+        argv.add("-b");
+        argv.add("/proc/");
+        argv.add("-w");
+        argv.add("/root");
+        argv.add("/usr/bin/env");
+        argv.add("HOME=/root");
+        argv.add("PATH=/bin:/usr/bin:/sbin:/usr/sbin");
+        argv.add("SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt");
+        argv.add("SSL_CERT_DIR=/etc/ssl/certs");
+        argv.add("sh");
+        argv.add("-c");
+        argv.add(command);
+
+        ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(rootfs);
         builder.redirectErrorStream(true);
         Map<String, String> env = builder.environment();
-        env.put("HOME", rootfs.getAbsolutePath());
-        env.put("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-        env.put("LD_LIBRARY_PATH",
-            new File(rootfs, "lib").getAbsolutePath() + ":" + new File(rootfs, "usr/lib").getAbsolutePath());
+        // A clean environment is required: host variables (including certificate
+        // settings and the Termux prefix) leak into the guest and break apk.
+        env.clear();
+        env.put("PROOT_TMP_DIR", prootTmpDir().getAbsolutePath());
 
         Process process = builder.start();
+        Thread watchdog = new Thread(() -> {
+            try {
+                Thread.sleep(COMMAND_TIMEOUT_MS);
+                Log.w(TAG, "Command timed out after 10 minutes; killing.");
+                process.destroy();
+            } catch (InterruptedException ignored) {
+                // Command finished first.
+            }
+        });
+        watchdog.setDaemon(true);
+        watchdog.start();
+
         StringBuilder output = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(
             new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
@@ -200,11 +292,15 @@ public class LinuxEnvironment extends Plugin {
                 output.append(line).append('\n');
             }
         }
-        int code = process.waitFor();
-        return new ProcessResult(code, output.toString().trim());
+        try {
+            int code = process.waitFor();
+            return new ProcessResult(code, output.toString().trim());
+        } finally {
+            watchdog.interrupt();
+        }
     }
 
-    private void download(String urlString, File destination) throws Exception {
+    private void download(String urlString, File destination, String label) throws Exception {
         File partial = new File(destination.getParentFile(), destination.getName() + ".part");
         if (partial.exists()) {
             partial.delete();
@@ -213,11 +309,11 @@ public class LinuxEnvironment extends Plugin {
         Request request = new Request.Builder().url(urlString).build();
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new IOException("Linux rootfs download failed with HTTP " + response.code() + ".");
+                throw new IOException("Linux " + label + " download failed with HTTP " + response.code() + ".");
             }
             ResponseBody body = response.body();
             if (body == null) {
-                throw new IOException("Linux rootfs download returned no data.");
+                throw new IOException("Linux " + label + " download returned no data.");
             }
             try (InputStream input = body.byteStream();
                  FileOutputStream output = new FileOutputStream(partial)) {
@@ -228,13 +324,13 @@ public class LinuxEnvironment extends Plugin {
                     output.write(buffer, 0, read);
                     total += read;
                     if (total > MAX_ROOTFS_BYTES) {
-                        throw new IOException("The Linux rootfs archive is too large.");
+                        throw new IOException("The Linux " + label + " is too large.");
                     }
                 }
             }
         }
         if (!partial.renameTo(destination)) {
-            throw new IOException("The Linux rootfs archive could not be saved.");
+            throw new IOException("The Linux " + label + " could not be saved.");
         }
     }
 
@@ -264,7 +360,18 @@ public class LinuxEnvironment extends Plugin {
                     throw new IOException("The rootfs archive escapes its directory: " + name);
                 }
                 if (entry.isDirectory()) {
-                    output.mkdirs();
+                    mkdirs(output);
+                    applyMode(output, entry);
+                    continue;
+                }
+                if (entry.isSymbolicLink()) {
+                    writeSymlink(entry.getLinkName(), output);
+                    applyMode(output, entry);
+                    continue;
+                }
+                if (entry.isLink()) {
+                    writeHardLink(destination, entry.getLinkName(), output);
+                    applyMode(output, entry);
                     continue;
                 }
                 if (!entry.isFile()) {
@@ -278,12 +385,90 @@ public class LinuxEnvironment extends Plugin {
                         stream.write(buffer, 0, read);
                     }
                 }
-                output.setReadable(true, false);
-                String base = new File(name).getName();
-                if (base.equals("sh") || base.equals("busybox") || base.equals("apk")) {
-                    output.setExecutable(true, false);
-                }
+                applyMode(output, entry);
             }
+        }
+    }
+
+    /**
+     * Applies the tar entry's unix mode (permissions) through android.system,
+     * which is available from API 21. Falls back to basic Java permissions if
+     * the syscall is unavailable.
+     */
+    private void applyMode(File target, TarArchiveEntry entry) {
+        int mode = entry.getMode() & 0x7777;
+        try {
+            Os.chmod(target.getAbsolutePath(), mode);
+        } catch (Exception ignored) {
+            // Executable bit fallback for files only.
+            if ((mode & 0111) != 0) {
+                target.setExecutable(true, false);
+            } else {
+                target.setReadable(true, false);
+            }
+        }
+    }
+
+    private void writeSymlink(String target, File link) throws IOException {
+        try {
+            Os.symlink(target, link.getAbsolutePath());
+        } catch (ErrnoException first) {
+            if (first.errno != OsConstants.EEXIST) {
+                throw new IOException(
+                    "Could not create symbolic link " + name(link) + ": " + first.getMessage());
+            }
+            link.delete();
+            try {
+                Os.symlink(target, link.getAbsolutePath());
+            } catch (ErrnoException second) {
+                throw new IOException(
+                    "Could not create symbolic link " + name(link) + ": " + second.getMessage());
+            }
+        }
+    }
+
+    private void writeHardLink(File rootfs, String source, File link) throws IOException {
+        File origin = new File(rootfs, source);
+        String canonicalSource = origin.getCanonicalPath();
+        String rootCanonical = rootfs.getCanonicalPath();
+        if (!canonicalSource.startsWith(rootCanonical + File.separator)) {
+            throw new IOException("The rootfs archive hard-links outside its directory: " + source);
+        }
+        if (!origin.isFile()) {
+            throw new IOException("The rootfs archive hard-links a missing file: " + source);
+        }
+        if (link.exists()) {
+            link.delete();
+        }
+        try {
+            Os.link(origin.getAbsolutePath(), link.getAbsolutePath());
+        } catch (ErrnoException failure) {
+            throw new IOException(
+                "Could not create hard link " + name(link) + ": " + failure.getMessage());
+        }
+    }
+
+    private static String name(File file) {
+        return new File(file.getAbsolutePath()).getName();
+    }
+
+    private void verifySha256(File file, String expectedHex) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            byte[] buffer = new byte[128 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest.digest()) {
+            hex.append(String.format(Locale.US, "%02x", b));
+        }
+        if (!hex.toString().equals(expectedHex.toLowerCase(Locale.US))) {
+            throw new IOException(
+                "Downloaded proot does not match its checksum. Expected " + expectedHex
+                    + ", got " + hex + ".");
         }
     }
 
