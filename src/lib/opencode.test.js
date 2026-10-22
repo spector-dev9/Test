@@ -5,6 +5,7 @@ import {
 } from "./connection.js";
 import {
   createOpenCodeApi,
+  normalizeShellRequest,
   PROJECT_DIRECTORY,
   unwrapOpenCodeResult,
   validateHealthPayload,
@@ -981,4 +982,65 @@ test("loads project files, searches, and applies safe patches", async () => {
     api.applyProjectPatch(PROJECT_DIRECTORY, "not a patch"),
     /not a safe single-file patch/,
   );
+});
+
+test("accepts an absolute guest shell command with bounded arguments", () => {
+  const request = normalizeShellRequest({
+    command: "/data/app/libproot.so",
+    args: ["--link2symlink", "-0", "-r", "/rootfs/", "/bin/ash", "-l"],
+    cwd: "/data/user/0/com.opencode.mobile/files/workspace",
+    env: { HOME: "/root", PATH: "/usr/bin:/bin" },
+  });
+
+  assert.equal(request.command, "/data/app/libproot.so");
+  assert.equal(request.args.length, 6);
+  assert.equal(
+    request.cwd,
+    "/data/user/0/com.opencode.mobile/files/workspace",
+  );
+  assert.deepEqual(request.env, { HOME: "/root", PATH: "/usr/bin:/bin" });
+});
+
+test("refuses a shell command that is not an absolute path", () => {
+  assert.equal(normalizeShellRequest({ command: "sh" }), null);
+  assert.equal(normalizeShellRequest({ command: "  " }), null);
+  assert.equal(normalizeShellRequest({}), null);
+  assert.equal(
+    normalizeShellRequest({ command: "proot\u0000 --rootfs" }),
+    null,
+  );
+});
+
+test("drops unsafe arguments, paths, and environment entries", () => {
+  const request = normalizeShellRequest({
+    command: "/data/app/libproot.so",
+    args: ["ok", "bad\u0000arg", 42, null, "x".repeat(9000)],
+    cwd: "relative/path",
+    env: {
+      GOOD: "value",
+      "bad key": "value",
+      "1INVALID": "value",
+      LONG: "x".repeat(9000),
+    },
+  });
+
+  assert.deepEqual(request.args, ["ok"]);
+  assert.equal(request.cwd, undefined);
+  assert.deepEqual(request.env, { GOOD: "value" });
+});
+
+test("caps the number of arguments and environment keys", () => {
+  const args = Array.from({ length: 200 }, (_, index) => `arg-${index}`);
+  const env = Object.fromEntries(
+    Array.from({ length: 100 }, (_, index) => [`KEY_${index}`, "v"]),
+  );
+
+  const request = normalizeShellRequest({
+    command: "/data/app/libproot.so",
+    args,
+    env,
+  });
+
+  assert.equal(request.args.length, 64);
+  assert.equal(Object.keys(request.env).length, 32);
 });

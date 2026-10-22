@@ -5,6 +5,7 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -50,6 +51,9 @@ public class LinuxEnvironment extends Plugin {
     private static final String PROOT_TALLOC_LIBRARY = "libtalloc.so";
     private static final String PROOT_SHMEM_LIBRARY = "libandroid-shmem.so";
     private static final String MARKER_READY = ".ready";
+    // The PATH the guest sees. It is the Alpine one, not the Android one.
+    private static final String GUEST_PATH =
+        "/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:/usr/sbin";
     // Official Alpine aarch64 minirootfs mirror. Change this constant if the mirror/path moves.
     private static final String ALPINE_ROOTFS_URL =
         "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.3-aarch64.tar.gz";
@@ -230,6 +234,53 @@ public class LinuxEnvironment extends Plugin {
             }
         }
         return true;
+    }
+
+
+    @PluginMethod
+    public void guestShell(PluginCall call) {
+        String directory = call.getString("directory");
+        commandExecutor.execute(() -> {
+            try {
+                if (!isLinuxReady()) {
+                    call.reject(
+                        "The Alpine environment is not ready. Prepare it first."
+                    );
+                    return;
+                }
+
+                File rootfs = rootfsPath();
+                File workspace = resolveWorkspace(directory);
+                writeResolv(rootfs);
+
+                List<String> argv = guestArgv(rootfs, workspace);
+
+                JSObject result = new JSObject();
+                result.put("command", prootPath().getAbsolutePath());
+
+                JSArray args = new JSArray();
+                for (String argument : argv) {
+                    args.put(argument);
+                }
+                result.put("args", args);
+                result.put("cwd", workspace == null ? "/root" : workspace.getAbsolutePath());
+                result.put("rootfs", rootfs.getAbsolutePath());
+
+                JSObject env = new JSObject();
+                env.put("HOME", "/root");
+                env.put("PATH", GUEST_PATH);
+                env.put("TERM", "xterm-256color");
+                env.put("LANG", "C.UTF-8");
+                env.put("SHELL", "/bin/ash");
+                env.put("PROOT_TMP_DIR", prootTmpDir().getAbsolutePath());
+                env.put("PROOT_LOADER", prootLoaderPath().getAbsolutePath());
+                result.put("env", env);
+
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, null);
+            }
+        });
     }
 
     @PluginMethod
@@ -590,18 +641,16 @@ public class LinuxEnvironment extends Plugin {
             && output.contains("temporary error");
     }
 
-    private ProcessResult runLinuxCommandOnce(
-        String command,
-        String directory,
-        long timeoutMs
-    ) throws Exception {
-        File rootfs = rootfsPath();
-        File proot = prootPath();
-        File workspace = resolveWorkspace(directory);
-        writeResolv(rootfs);
 
+    /**
+     * Build the PRoot argument list for a guest process.
+     *
+     * The project folder is bound at the same path inside the guest so the
+     * agent, the terminal, and the Alpine shell all work on the same files.
+     */
+    private List<String> guestArgv(File rootfs, File workspace) {
         List<String> argv = new ArrayList<>();
-        argv.add(proot.getAbsolutePath());
+        argv.add(prootPath().getAbsolutePath());
         // Android SELinux denies hard links inside app-private storage, which
         // apk needs when installing packages. PRoot can emulate them as symlinks.
         argv.add("--link2symlink");
@@ -614,12 +663,32 @@ public class LinuxEnvironment extends Plugin {
         argv.add("/sys/");
         argv.add("-b");
         argv.add("/proc/");
+
         if (workspace != null) {
-            // Make the project folder visible inside the guest at the same
-            // path so the agent and the terminal share one workspace.
             String path = workspace.getAbsolutePath();
             argv.add("-b");
             argv.add(path + ":" + path);
+        }
+
+        argv.add("-w");
+        argv.add(workspace == null ? "/root" : workspace.getAbsolutePath());
+        return argv;
+    }
+
+    private ProcessResult runLinuxCommandOnce(
+        String command,
+        String directory,
+        long timeoutMs
+    ) throws Exception {
+        File rootfs = rootfsPath();
+        File proot = prootPath();
+        File workspace = resolveWorkspace(directory);
+        writeResolv(rootfs);
+
+        List<String> argv = guestArgv(rootfs, workspace);
+        if (workspace != null) {
+            // npm installs into a private store when the project folder is
+            // read-only, so the guest can still resolve dependencies.
             File nodeModules = null;
             try {
                 nodeModules = nodeModulesStore(workspace, command);
@@ -632,11 +701,9 @@ public class LinuxEnvironment extends Plugin {
                 argv.add(nodeModules.getAbsolutePath() + ":" + mountPoint);
             }
         }
-        argv.add("-w");
-        argv.add(workspace == null ? "/root" : workspace.getAbsolutePath());
         argv.add("/usr/bin/env");
         argv.add("HOME=/root");
-        argv.add("PATH=/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:/usr/sbin");
+        argv.add("PATH=" + GUEST_PATH);
         argv.add("SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt");
         argv.add("SSL_CERT_DIR=/etc/ssl/certs");
         argv.add("sh");

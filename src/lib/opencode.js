@@ -81,6 +81,60 @@ export const opencode = createOpencodeClient({
   ...(nativeFetch ? { fetch: nativeFetch } : {}),
 });
 
+const MAX_SHELL_ARGS = 64;
+const MAX_SHELL_ARG_CHARS = 4096;
+const MAX_SHELL_ENV_KEYS = 32;
+const SHELL_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Validate a custom terminal command.
+ *
+ * The app asks the local server to start a shell for the project terminal.
+ * A guest Alpine shell is one of those commands, so the shape is checked
+ * before it reaches the server: absolute paths only, a bounded argument
+ * list, and a small, well-known environment.
+ */
+export function normalizeShellRequest({ command, args, cwd, env } = {}) {
+  if (typeof command !== "string" || !command.trim()) return null;
+  if (!command.startsWith("/") || command.includes("\0")) return null;
+  if (command.length > 4096) return null;
+
+  const normalizedArgs = [];
+  if (Array.isArray(args)) {
+    for (const argument of args.slice(0, MAX_SHELL_ARGS)) {
+      if (typeof argument !== "string") continue;
+      if (argument.includes("\0")) continue;
+      if (argument.length > MAX_SHELL_ARG_CHARS) continue;
+      normalizedArgs.push(argument);
+    }
+  }
+
+  let workingDirectory;
+  if (typeof cwd === "string" && cwd.startsWith("/") && cwd.length <= 4096) {
+    workingDirectory = cwd;
+  }
+
+  const normalizedEnv = {};
+  if (env && typeof env === "object" && !Array.isArray(env)) {
+    for (const [key, value] of Object.entries(env).slice(
+      0,
+      MAX_SHELL_ENV_KEYS,
+    )) {
+      if (!SHELL_ENV_KEY.test(key)) continue;
+      if (typeof value !== "string" || value.length > 4096) continue;
+      if (value.includes("\0")) continue;
+      normalizedEnv[key] = value;
+    }
+  }
+
+  return {
+    command: command.trim(),
+    args: normalizedArgs,
+    ...(workingDirectory ? { cwd: workingDirectory } : {}),
+    ...(Object.keys(normalizedEnv).length > 0 ? { env: normalizedEnv } : {}),
+  };
+}
+
 function unexpectedResponse(cause) {
   return new OpenCodeConnectionError(
     CONNECTION_ERROR_KINDS.INVALID,
@@ -1096,12 +1150,21 @@ export function createOpenCodeApi(client = opencode) {
       return data;
     },
 
-    async createProjectTerminal(directory, { title } = {}, signal) {
+    async createProjectTerminal(
+      directory,
+      { title, command, args, cwd, env } = {},
+      signal,
+    ) {
       const scope = validateProjectDirectory(directory);
       const body = {
         directory: scope,
         title: normalizePtyTitle(title),
       };
+
+      const shell = normalizeShellRequest({ command, args, cwd, env });
+      if (shell) {
+        Object.assign(body, shell);
+      }
 
       const data = await runRequest(
         client,

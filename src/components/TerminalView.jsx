@@ -19,6 +19,7 @@ import {
   ensureLinuxEnvironment,
   isLinuxEnvironmentSupported,
   isLinuxEnvironmentReady,
+  linuxGuestShell,
   runLinuxCommand,
 } from "../lib/linuxEnvironment.js";
 import { readUiPrefs } from "../lib/uiPrefs.js";
@@ -150,11 +151,13 @@ export function TerminalView({
   const [linuxSupported, setLinuxSupported] = useState(false);
   const [linuxReady, setLinuxReady] = useState(false);
   const [linuxPreparing, setLinuxPreparing] = useState(false);
+  const [shellError, setShellError] = useState("");
   const [linuxError, setLinuxError] = useState("");
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxCommand, setLinuxCommand] = useState("");
   const [linuxRunning, setLinuxRunning] = useState(false);
   const [showLinux, setShowLinux] = useState(false);
+  const [shellMode, setShellMode] = useState("host");
   const [sessions, setSessions] = useState([]);
   const [activePtyId, setActivePtyId] = useState(null);
   const [attachedId, setAttachedId] = useState(null);
@@ -536,8 +539,17 @@ export function TerminalView({
       if (activePtyId) setActivePtyId(null);
 
       try {
+        const { options, error: shellFailure } = await resolveShellOptions();
+
+        if (options === null) {
+          setStatus("error");
+          setError(shellFailure || "The Alpine shell could not be started.");
+          return;
+        }
+
         const pty = await createProjectTerminal(directory, {
           title: terminalTitle,
+          ...options,
         });
 
         if (cancelled) {
@@ -577,6 +589,7 @@ export function TerminalView({
     connected,
     directory,
     enabled,
+    resolveShellOptions,
     terminalTitle,
   ]);
 
@@ -643,6 +656,41 @@ export function TerminalView({
       requestAnimationFrame(() => terminalRef.current?.focus());
     }
   }
+
+
+  const resolveShellOptions = useCallback(async () => {
+    if (shellMode !== "alpine") return { options: {} };
+
+    try {
+      const shell = await linuxGuestShell(directory);
+
+      if (!shell.command || shell.args.length === 0) {
+        throw new Error("The Alpine shell could not be prepared.");
+      }
+
+      setShellError("");
+      return {
+        options: {
+          command: shell.command,
+          args: [...shell.args, "/bin/ash", "-l"],
+          cwd: shell.cwd || directory,
+          env: shell.env,
+        },
+      };
+    } catch (failure) {
+      const message =
+        failure?.message || "The Alpine shell could not be started.";
+      setShellError(message);
+      return { options: null, error: message };
+    }
+  }, [directory, shellMode]);
+
+  const changeShellMode = useCallback((mode) => {
+    setShellMode((current) => (current === mode ? current : mode));
+    setShellError("");
+    // A different shell needs its own session.
+    setActivePtyId(null);
+  }, []);
 
   async function runLinux() {
     if (!linuxCommand.trim() || linuxRunning) return;
@@ -755,6 +803,32 @@ export function TerminalView({
           >
             {fullscreen ? "Exit" : "Expand"}
           </button>
+          {linuxSupported ? (
+            <div
+              className="shell-mode-switch"
+              role="group"
+              aria-label="Terminal shell"
+            >
+              <button
+                type="button"
+                className={`shell-mode-option${shellMode === "host" ? " active" : ""}`}
+                aria-pressed={shellMode === "host"}
+                onClick={() => changeShellMode("host")}
+                title="Run commands in the app sandbox"
+              >
+                Host
+              </button>
+              <button
+                type="button"
+                className={`shell-mode-option${shellMode === "alpine" ? " active" : ""}`}
+                aria-pressed={shellMode === "alpine"}
+                onClick={() => changeShellMode("alpine")}
+                title="Run commands in the bundled Alpine environment"
+              >
+                Alpine
+              </button>
+            </div>
+          ) : null}
           {linuxSupported && (
             <button
               type="button"
@@ -877,6 +951,12 @@ export function TerminalView({
         {error && connected ? (
           <div className="inline-error terminal-error" role="alert">
             <span>{error}</span>
+          </div>
+        ) : null}
+
+        {shellMode === "alpine" && shellError ? (
+          <div className="inline-error terminal-error" role="alert">
+            <span>{shellError}</span>
           </div>
         ) : null}
 

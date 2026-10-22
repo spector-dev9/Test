@@ -7621,3 +7621,32 @@ html[data-theme="rose"] {
 .view-error-card .settings-runtime-actions {
   margin-top: 6px;
 }
+
+/* Terminal shell switch: host sandbox or the bundled Alpine environment */
+.shell-mode-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.shell-mode-option {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shell-mode-option.active {
+  color: #14121f;
+  background: var(--gradient-primary);
+}

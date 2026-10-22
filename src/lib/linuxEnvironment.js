@@ -27,6 +27,32 @@ export async function ensureLinuxEnvironment() {
   return NativeLinuxEnvironment.ensureLinux();
 }
 
+export async function linuxGuestShell(directory) {
+  if (!NativeLinuxEnvironment) {
+    throw new Error("The Linux environment is only available in the Android app.");
+  }
+  const result = await NativeLinuxEnvironment.guestShell({
+    ...(directory ? { directory } : {}),
+  });
+
+  const args = Array.isArray(result?.args) ? result.args : [];
+  const env = {};
+
+  if (result?.env && typeof result.env === "object") {
+    for (const [key, value] of Object.entries(result.env)) {
+      if (typeof value === "string") env[key] = value;
+    }
+  }
+
+  return {
+    command: typeof result?.command === "string" ? result.command : "",
+    args: args.filter((argument) => typeof argument === "string"),
+    cwd: typeof result?.cwd === "string" ? result.cwd : "",
+    env,
+    rootfs: typeof result?.rootfs === "string" ? result.rootfs : "",
+  };
+}
+
 export async function runLinuxCommand(command, directory) {
   if (typeof command !== "string" || !command.trim()) {
     throw new Error("A command is required.");
