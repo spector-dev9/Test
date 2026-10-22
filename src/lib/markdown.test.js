@@ -139,3 +139,82 @@ test("paragraph text survives line endings and wrapping", () => {
   const [paragraph] = parseMarkdown("first\r\nsecond");
   assert.equal(paragraph.type, "paragraph");
 });
+
+test("keeps the parser output in the shape the renderer expects", () => {
+  // A mismatch here is what blanks the app: the renderer walks these fields
+  // directly, so every one of them has to match what it produces.
+  const doc = [
+    "# Title",
+    "",
+    "A paragraph with a [link](https://example.com) and `code`.",
+    "",
+    "- one",
+    "- two",
+    "  - nested",
+    "",
+    "1. first",
+    "",
+    "> quoted words",
+    "",
+    "```js",
+    "const x = 1;",
+    "```",
+    "",
+    "| a | **b** |",
+    "| - | - |",
+    "| 1 | [x](https://x.test) |",
+    "",
+    "---",
+    "",
+    "final line",
+  ].join("\n");
+
+  const blocks = parseMarkdown(doc);
+
+  const isInlineNode = (node) =>
+    node &&
+    typeof node === "object" &&
+    typeof node.type === "string" &&
+    ("value" in node || "children" in node || "href" in node);
+
+  for (const block of blocks) {
+    switch (block.type) {
+      case "paragraph":
+      case "heading":
+        assert.ok(Array.isArray(block.children), `${block.type} children`);
+        assert.ok(block.children.every(isInlineNode));
+        break;
+      case "quote":
+        assert.ok(Array.isArray(block.children));
+        break;
+      case "code":
+        assert.equal(typeof block.value, "string");
+        break;
+      case "rule":
+        break;
+      case "list": {
+        assert.ok(Array.isArray(block.items));
+        for (const item of block.items) {
+          assert.ok(Array.isArray(item.children));
+        }
+        break;
+      }
+      case "table":
+        assert.ok(Array.isArray(block.header));
+        assert.ok(Array.isArray(block.rows));
+        assert.ok(block.header.every((cell) => Array.isArray(cell)));
+        assert.ok(
+          block.rows.every((row) => Array.isArray(row) && row.every((cell) => Array.isArray(cell))),
+        );
+        assert.ok(
+          block.header.every((cell) => cell.every(isInlineNode)),
+        );
+        assert.ok(
+          block.rows.every((row) => row.every((cell) => cell.every(isInlineNode))),
+        );
+        break;
+      default:
+        assert.fail(`unexpected block type ${block.type}`);
+    }
+  }
+});

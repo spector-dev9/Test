@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Browser } from "@capacitor/browser";
 import { CopyButton } from "./CopyButton";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { MarkdownText } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 import { highlightCode } from "../lib/highlight";
@@ -90,10 +91,14 @@ export function MessageList({ messages, phase, resetKey }) {
       ) : null}
 
       {visibleMessages.map((message) => (
-        <article
-          className={`message message-${message.role}`}
+        <ErrorBoundary
           key={message.id}
+          label="This message"
+          variant="inline"
         >
+          <article
+            className={`message message-${message.role}`}
+          >
           <div className="message-meta">
             <span className="message-role">
               {message.role === "user" ? "You" : "OpenCode"}
@@ -143,10 +148,11 @@ export function MessageList({ messages, phase, resetKey }) {
             </div>
           ) : null}
 
-          {message.error ? (
-            <div className="message-error">{message.error}</div>
-          ) : null}
-        </article>
+            {message.error ? (
+              <div className="message-error">{message.error}</div>
+            ) : null}
+          </article>
+        </ErrorBoundary>
       ))}
 
       {phase === "sending" ? (

@@ -7575,3 +7575,49 @@ html[data-theme="rose"] {
   gap: 8px;
   width: 100%;
 }
+
+/* Rendering failures stay inside one surface */
+.view-error {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 22px 18px;
+  overflow: auto;
+}
+
+.view-error-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 460px;
+  padding: 18px;
+  border: 1px solid rgba(223, 123, 123, 0.32);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.view-error-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.view-error-detail {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: #e8b7b7;
+  background: rgba(223, 123, 123, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.view-error-card .settings-runtime-actions {
+  margin-top: 6px;
+}

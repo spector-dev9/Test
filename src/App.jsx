@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
 import "./App.css";
 import { AppearanceView } from "./components/AppearanceView";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ChangesView } from "./components/ChangesView";
 import { ChatView } from "./components/ChatView";
 import { ContextView } from "./components/ContextView";
@@ -909,6 +910,11 @@ export default function App() {
           />
 
           <div className="main-content">
+            <ErrorBoundary
+              key={`Chat-${activeView}`}
+              label="Chat"
+              onBack={() => handleNavigate("chat")}
+            >
             <div className="view-pane" hidden={activeView !== "chat"}>
               <ChatView
                 health={health}
@@ -952,7 +958,13 @@ export default function App() {
                 onDraftChange={setDraft}
               />
             </div>
+            </ErrorBoundary>
 
+            <ErrorBoundary
+              key={`Files-${activeView}`}
+              label="Files"
+              onBack={() => handleNavigate("chat")}
+            >
             <div className="view-pane" hidden={activeView !== "files"}>
               <FilesView
                 key={activeDirectory}
@@ -963,7 +975,13 @@ export default function App() {
                 intent={fileIntent}
               />
             </div>
+            </ErrorBoundary>
 
+            <ErrorBoundary
+              key={`Context-${activeView}`}
+              label="Context"
+              onBack={() => handleNavigate("chat")}
+            >
             <div className="view-pane" hidden={activeView !== "context"}>
               <ContextView
                 session={selectedSession}
@@ -981,7 +999,13 @@ export default function App() {
                 creatingSession={creatingSession}
               />
             </div>
+            </ErrorBoundary>
 
+            <ErrorBoundary
+              key={`Terminal-${activeView}`}
+              label="Terminal"
+              onBack={() => handleNavigate("chat")}
+            >
             <div className="view-pane" hidden={activeView !== "terminal"}>
               <TerminalView
                 key={activeDirectory}
@@ -993,7 +1017,13 @@ export default function App() {
                 terminalFontSize={uiPrefs.terminalFontSize}
               />
             </div>
+            </ErrorBoundary>
 
+            <ErrorBoundary
+              key={`Preview-${activeView}`}
+              label="Preview"
+              onBack={() => handleNavigate("chat")}
+            >
             <div className="view-pane" hidden={activeView !== "preview"}>
               <PreviewView
                 connected={connected}
@@ -1004,8 +1034,14 @@ export default function App() {
                 onFullscreenChange={setPreviewFullscreen}
               />
             </div>
+            </ErrorBoundary>
 
             {activeView === "sessions" ? (
+              <ErrorBoundary
+                key={`Sessions-${activeView}`}
+                label="Sessions"
+                onBack={() => handleNavigate("chat")}
+              >
               <SessionsView
                 sessions={displayedSessions}
                 project={activeProject}
@@ -1025,9 +1061,15 @@ export default function App() {
                 onDeleteSession={deleteSession}
                 onSessionsRefreshed={overview.refresh}
               />
+              </ErrorBoundary>
             ) : null}
 
             {activeView === "models" ? (
+              <ErrorBoundary
+                key={`Models-${activeView}`}
+                label="Models"
+                onBack={() => handleNavigate("chat")}
+              >
               <ModelsView
                 models={resources.models}
                 preferredModel={validPreferredModel}
@@ -1038,9 +1080,15 @@ export default function App() {
                 connected={connected}
                 project={activeProject}
               />
+              </ErrorBoundary>
             ) : null}
 
             {activeView === "changes" ? (
+              <ErrorBoundary
+                key={`Changes-${activeView}`}
+                label="Changes"
+                onBack={() => handleNavigate("chat")}
+              >
               <ChangesView
                 changes={changes}
                 onRefresh={refreshChanges}
@@ -1048,16 +1096,28 @@ export default function App() {
                 project={activeProject}
                 onOpenFile={handleOpenFileFromChanges}
               />
+              </ErrorBoundary>
             ) : null}
 
             {activeView === "appearance" ? (
+              <ErrorBoundary
+                key={`Appearance-${activeView}`}
+                label="Appearance"
+                onBack={() => handleNavigate("chat")}
+              >
               <AppearanceView
                 uiPrefs={uiPrefs}
                 onChangeUiPref={handleChangeUiPref}
               />
+              </ErrorBoundary>
             ) : null}
 
             {activeView === "settings" ? (
+              <ErrorBoundary
+                key={`Settings-${activeView}`}
+                label="Settings"
+                onBack={() => handleNavigate("chat")}
+              >
               <SettingsView
                 health={health}
                 connection={connection}
@@ -1073,6 +1133,7 @@ export default function App() {
                 onProvidersChanged={resources.refresh}
                 onOpenAppearance={() => handleNavigate("appearance")}
               />
+              </ErrorBoundary>
             ) : null}
           </div>
         </main>
