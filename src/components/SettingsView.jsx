@@ -23,6 +23,7 @@ import {
   installLinuxPackage,
   isLinuxEnvironmentReady,
   linuxRootfsPath,
+  runLinuxCommand,
 } from "../lib/linuxEnvironment.js";
 import {
   describeServer,
@@ -30,6 +31,7 @@ import {
 } from "../lib/workspace";
 import { normalizeUiPrefs } from "../lib/uiPrefs";
 import { copyText } from "../lib/clipboard";
+import { commandHint, commandOutcome } from "../lib/shell.js";
 import { DetailRow } from "./DetailRow";
 import { GitHubCard } from "./GitHubCard";
 
@@ -53,6 +55,10 @@ function runtimeConnection(status, connected) {
     return { tone: "offline", label: "Not supported" };
   }
   return { tone: "loading", label: "Preparing" };
+}
+
+function formatElapsed(outcome) {
+  return outcome.durationMs === null ? "" : ` (${outcome.durationMs} ms)`;
 }
 
 export function SettingsView({
@@ -92,8 +98,11 @@ export function SettingsView({
   const [linuxReady, setLinuxReady] = useState(false);
   const [linuxReason, setLinuxReason] = useState("");
   const [linuxBusy, setLinuxBusy] = useState(false);
+  const [linuxTask, setLinuxTask] = useState("");
+  const [linuxElapsed, setLinuxElapsed] = useState(0);
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxPkg, setLinuxPkg] = useState("");
+  const [linuxCommand, setLinuxCommand] = useState("");
   const [rootfsPath, setRootfsPath] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
@@ -152,8 +161,22 @@ export function SettingsView({
     };
   }, []);
 
+  useEffect(() => {
+    if (!linuxBusy) {
+      setLinuxElapsed(0);
+      return undefined;
+    }
+    const startedAt = Date.now();
+    setLinuxElapsed(0);
+    const timer = setInterval(() => {
+      setLinuxElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [linuxBusy, linuxTask]);
+
   async function ensureLinux() {
     setLinuxBusy(true);
+    setLinuxTask("prepare");
     setLinuxOutput("");
     try {
       const result = await ensureLinuxEnvironment();
@@ -170,23 +193,53 @@ export function SettingsView({
       setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
     } finally {
       setLinuxBusy(false);
+      setLinuxTask("");
     }
   }
 
   async function installLinux() {
     const pkg = linuxPkg.trim();
-    if (!pkg) return;
+    if (!pkg || linuxBusy) return;
     setLinuxBusy(true);
+    setLinuxTask("install");
+    setLinuxOutput((previous) => previous + `$ apk add ${pkg}\n`);
     try {
       const result = await installLinuxPackage(pkg, project?.worktree);
+      const outcome = commandOutcome(result);
       setLinuxOutput((previous) =>
-        previous + `$ apk add ${pkg}\n${result.output}\n`
+        previous +
+        `${outcome.output}\n[${outcome.label}${formatElapsed(outcome)}]\n`
       );
-      setLinuxPkg("");
+      if (outcome.ok) setLinuxPkg("");
     } catch (failure) {
       setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
     } finally {
       setLinuxBusy(false);
+      setLinuxTask("");
+    }
+  }
+
+  async function runSettingsCommand() {
+    const command = linuxCommand.trim();
+    if (!command || linuxBusy) return;
+    setLinuxBusy(true);
+    setLinuxTask("run");
+    setLinuxOutput((previous) => previous + `$ ${command}\n`);
+    try {
+      const result = await runLinuxCommand(command, project?.worktree);
+      const outcome = commandOutcome(result);
+      const hint = commandHint(command, outcome.output);
+      setLinuxOutput((previous) =>
+        previous +
+        `${outcome.output}\n[${outcome.label}${formatElapsed(outcome)}]\n` +
+        (hint ? `Hint: ${hint}\n` : "")
+      );
+      if (outcome.ok) setLinuxCommand("");
+    } catch (failure) {
+      setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
+    } finally {
+      setLinuxBusy(false);
+      setLinuxTask("");
     }
   }
 
@@ -654,7 +707,7 @@ export function SettingsView({
                 onClick={ensureLinux}
                 disabled={linuxBusy || !native}
               >
-                {linuxBusy ? "Preparing…" : "Ensure Linux"}
+                {linuxTask === "prepare" ? "Preparing…" : "Ensure Linux"}
               </button>
               <input
                 className="linux-input-field"
@@ -673,9 +726,43 @@ export function SettingsView({
                 onClick={installLinux}
                 disabled={linuxBusy || !linuxReady || !linuxPkg.trim()}
               >
-                Install
+                {linuxTask === "install" ? "Installing…" : "Install"}
               </button>
             </div>
+            <div className="settings-runtime-actions">
+              <input
+                className="linux-input-field"
+                value={linuxCommand}
+                onChange={(event) => setLinuxCommand(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") runSettingsCommand();
+                }}
+                placeholder="Run a command (e.g. python3 --version)"
+                aria-label="Linux command"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={linuxBusy || !linuxReady}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={runSettingsCommand}
+                disabled={linuxBusy || !linuxReady || !linuxCommand.trim()}
+              >
+                {linuxTask === "run" ? "Running…" : "Run"}
+              </button>
+            </div>
+            {linuxBusy && linuxElapsed > 0 ? (
+              <p className="panel-note" role="status">
+                {linuxTask === "install"
+                  ? "Installing package"
+                  : linuxTask === "run"
+                    ? "Running command"
+                    : "Preparing Linux"}{" "}
+                — {linuxElapsed}s elapsed.
+              </p>
+            ) : null}
             {linuxReason ? (
               <p className="panel-note" role="status">
                 {linuxReason}

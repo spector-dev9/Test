@@ -225,6 +225,9 @@ public class StoragePlugin extends Plugin {
         } else if (write) {
             document.put("name", "session.json");
         }
+        if (!write) {
+            document.put("size", Math.max(0L, displaySize(uri)));
+        }
         call.resolve(document);
     }
 
@@ -269,6 +272,25 @@ public class StoragePlugin extends Plugin {
             // Display name is optional.
         }
         return null;
+    }
+
+    private long displaySize(Uri uri) {
+        try (
+            Cursor cursor = getContext().getContentResolver().query(
+                uri,
+                new String[] { OpenableColumns.SIZE },
+                null,
+                null,
+                null
+            )
+        ) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index);
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
     }
 
     private JSObject statusObject() {

@@ -148,6 +148,7 @@ export function SessionsView({
 
       <SessionTransfer
         sessions={sessions}
+        directory={project?.worktree}
         onSessionsRefreshed={onSessionsRefreshed}
       />
 

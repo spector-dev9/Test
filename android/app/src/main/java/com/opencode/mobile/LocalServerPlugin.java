@@ -78,13 +78,34 @@ public class LocalServerPlugin extends Plugin {
     @PluginMethod
     public void importSession(PluginCall call) {
         String uri = call.getString("uri");
+        String directory = call.getString("directory");
         if (uri == null || uri.trim().isEmpty()) {
             call.reject("A session file is required.");
             return;
         }
-        manager.importSession(Uri.parse(uri), (bytes, output, error) ->
-            resolveTransfer(call, bytes, output, error)
+        manager.importSession(
+            Uri.parse(uri),
+            directory,
+            (bytes, output, error) -> resolveTransfer(call, bytes, output, error),
+            this::emitImportProgress
         );
+    }
+
+    @PluginMethod
+    public void cancelImport(PluginCall call) {
+        manager.cancelImport();
+        call.resolve();
+    }
+
+    private void emitImportProgress(String phase, String message) {
+        if (getBridge() == null) return;
+
+        JSObject data = new JSObject();
+        data.put("phase", phase);
+        data.put("message", message);
+        getBridge().executeOnMainThread(() -> {
+            if (getBridge() != null) notifyListeners("sessionImportProgress", data);
+        });
     }
 
     private void resolveTransfer(PluginCall call, long bytes, String output, String error) {

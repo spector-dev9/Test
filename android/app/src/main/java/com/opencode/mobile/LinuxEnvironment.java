@@ -65,9 +65,14 @@ public class LinuxEnvironment extends Plugin {
         "https://dl-cdn.alpinelinux.org/alpine/v3.21/main";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
     private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
-    private static final Object COMMAND_LOCK = new Object();
+    private static final long RUN_COMMAND_TIMEOUT_MS = 2 * 60 * 1000L;
+    private static final long PACKAGE_TIMEOUT_MS = 5 * 60 * 1000L;
+    private static final long PACKAGE_CHECK_TIMEOUT_MS = 30 * 1000L;
+    private static final int MAX_COMMAND_OUTPUT_CHARS = 256 * 1024;
+    private static final Object APK_LOCK = new Object();
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService setupExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService commandExecutor = Executors.newCachedThreadPool();
     private final OkHttpClient client = new OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
@@ -75,7 +80,8 @@ public class LinuxEnvironment extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
-        executor.shutdownNow();
+        setupExecutor.shutdownNow();
+        commandExecutor.shutdownNow();
         super.handleOnDestroy();
     }
 
@@ -91,7 +97,7 @@ public class LinuxEnvironment extends Plugin {
 
     @PluginMethod
     public void ensureLinux(PluginCall call) {
-        executor.execute(() -> {
+        setupExecutor.execute(() -> {
             try {
                 File rootfs = ensureRootfs();
                 try {
@@ -130,15 +136,19 @@ public class LinuxEnvironment extends Plugin {
             call.reject("A command is required.");
             return;
         }
-        executor.execute(() -> {
+        commandExecutor.execute(() -> {
             try {
                 if (!isLinuxReady()) {
                     call.reject("The Linux environment is not ready. Call ensureLinux first.");
                     return;
                 }
-                ProcessResult result = runLinuxCommand(command, directory);
+                ProcessResult result =
+                    runLinuxCommand(command, directory, RUN_COMMAND_TIMEOUT_MS);
                 JSObject res = new JSObject();
                 res.put("exitCode", result.exitCode);
+                res.put("ok", result.exitCode == 0 && !result.timedOut);
+                res.put("timedOut", result.timedOut);
+                res.put("durationMs", result.durationMs);
                 res.put("output", result.output);
                 res.put("workingDirectory", workingDirectory(directory));
                 finish(call, res);
@@ -156,26 +166,43 @@ public class LinuxEnvironment extends Plugin {
             call.reject("A package name is required.");
             return;
         }
-        executor.execute(() -> {
+        pkg = pkg.trim();
+        if (!validPackageSpec(pkg)) {
+            call.reject("Package names may only contain letters, numbers, dots, plus signs, dashes, and version separators.");
+            return;
+        }
+        String requestedPackage = pkg;
+        commandExecutor.execute(() -> {
             try {
                 if (!isLinuxReady()) {
                     call.reject("The Linux environment is not ready. Call ensureLinux first.");
                     return;
                 }
                 ProcessResult result =
-                    runLinuxCommand("apk add --no-cache " + pkg, directory);
+                    runLinuxCommand(
+                        "apk add --no-cache " + requestedPackage,
+                        directory,
+                        PACKAGE_TIMEOUT_MS
+                    );
                 String output = result.output;
+                boolean installed = result.exitCode == 0;
                 // apk runs post-install triggers (busybox reindexes /bin and
                 // /usr/bin); under PRoot one can fail after the package itself
                 // is installed. Verify the package before reporting that case.
-                if (result.exitCode != 0 && allPackagesInstalled(pkg)) {
+                if (!result.timedOut
+                    && result.exitCode != 0
+                    && allPackagesInstalled(requestedPackage)) {
+                    installed = true;
                     output = output
-                        + "\nNote: apk reported an error, but " + pkg
+                        + "\nNote: apk reported an error, but " + requestedPackage
                         + " is installed and ready to use. The error came from a"
                         + " post-install trigger and can be ignored.";
                 }
                 JSObject res = new JSObject();
                 res.put("exitCode", result.exitCode);
+                res.put("ok", installed);
+                res.put("timedOut", result.timedOut);
+                res.put("durationMs", result.durationMs);
                 res.put("output", output);
                 finish(call, res);
             } catch (Exception failure) {
@@ -191,7 +218,11 @@ public class LinuxEnvironment extends Plugin {
                 return false;
             }
             try {
-                if (runLinuxCommand("apk info -e " + name, null).exitCode != 0) {
+                if (runLinuxCommand(
+                    "apk info -e " + name,
+                    null,
+                    PACKAGE_CHECK_TIMEOUT_MS
+                ).exitCode != 0) {
                     return false;
                 }
             } catch (Exception failure) {
@@ -350,7 +381,11 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private boolean isNodeUsable() throws Exception {
-        ProcessResult check = runLinuxCommand("node -v && npm -v", null);
+        ProcessResult check = runLinuxCommand(
+            "node -v && npm -v",
+            null,
+            PACKAGE_CHECK_TIMEOUT_MS
+        );
         if (check.exitCode != 0) {
             return false;
         }
@@ -494,20 +529,35 @@ public class LinuxEnvironment extends Plugin {
 
     private ProcessResult runLinuxCommand(String command, String directory)
         throws Exception {
-        synchronized (COMMAND_LOCK) {
-            ProcessResult result = runLinuxCommandOnce(command, directory);
-            if (!isApkCommand(command) || !isApkLockError(result.output)) {
+        return runLinuxCommand(command, directory, COMMAND_TIMEOUT_MS);
+    }
+
+    private ProcessResult runLinuxCommand(
+        String command,
+        String directory,
+        long timeoutMs
+    ) throws Exception {
+        if (!isApkCommand(command)) {
+            return runLinuxCommandOnce(command, directory, timeoutMs);
+        }
+        synchronized (APK_LOCK) {
+            ProcessResult result = runLinuxCommandOnce(command, directory, timeoutMs);
+            if (result.timedOut || !isApkLockError(result.output)) {
                 return result;
             }
             runLinuxCommandOnce(
                 "pkill -9 -x apk 2>/dev/null; rm -f /lib/apk/db/lock 2>/dev/null; sleep 1",
-                null);
-            result = runLinuxCommandOnce(command, directory);
+                null,
+                PACKAGE_CHECK_TIMEOUT_MS
+            );
+            result = runLinuxCommandOnce(command, directory, timeoutMs);
             if (isApkLockError(result.output)) {
                 runLinuxCommandOnce(
                     "pkill -9 -x apk 2>/dev/null; rm -f /lib/apk/db/lock 2>/dev/null; sleep 1",
-                    null);
-                result = runLinuxCommandOnce(command, directory);
+                    null,
+                    PACKAGE_CHECK_TIMEOUT_MS
+                );
+                result = runLinuxCommandOnce(command, directory, timeoutMs);
             }
             return result;
         }
@@ -522,14 +572,29 @@ public class LinuxEnvironment extends Plugin {
             || trimmed.matches("(?s).*[;&|]\\s*apk\\s+.*");
     }
 
+    private static boolean validPackageSpec(String value) {
+        if (value == null || value.length() > 240) {
+            return false;
+        }
+        for (String token : value.trim().split("\\s+")) {
+            if (!token.matches("[A-Za-z0-9][A-Za-z0-9._+@=<>~-]*")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isApkLockError(String output) {
         return output != null
             && output.contains("Unable to lock database")
             && output.contains("temporary error");
     }
 
-    private ProcessResult runLinuxCommandOnce(String command, String directory)
-        throws Exception {
+    private ProcessResult runLinuxCommandOnce(
+        String command,
+        String directory,
+        long timeoutMs
+    ) throws Exception {
         File rootfs = rootfsPath();
         File proot = prootPath();
         File workspace = resolveWorkspace(directory);
@@ -588,33 +653,104 @@ public class LinuxEnvironment extends Plugin {
         env.put("PROOT_TMP_DIR", prootTmpDir().getAbsolutePath());
         env.put("PROOT_LOADER", prootLoaderPath().getAbsolutePath());
 
+        long startedAt = System.nanoTime();
         Process process = builder.start();
-        Thread watchdog = new Thread(() -> {
-            try {
-                Thread.sleep(COMMAND_TIMEOUT_MS);
-                Log.w(TAG, "Command timed out after 10 minutes; killing.");
-                process.destroy();
-            } catch (InterruptedException ignored) {
-                // Command finished first.
-            }
-        });
-        watchdog.setDaemon(true);
-        watchdog.start();
+        try {
+            process.getOutputStream().close();
+        } catch (IOException ignored) {
+        }
 
         StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-            new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
-        )) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append('\n');
+        Thread readerThread = new Thread(() -> {
+            boolean truncated = false;
+            try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
+            )) {
+                char[] buffer = new char[4096];
+                int read;
+                while ((read = reader.read(buffer)) != -1) {
+                    synchronized (output) {
+                        int remaining = MAX_COMMAND_OUTPUT_CHARS - output.length();
+                        if (remaining > 0) {
+                            output.append(buffer, 0, Math.min(read, remaining));
+                        }
+                        if (read > remaining && !truncated) {
+                            output.append("\n[output truncated]\n");
+                            truncated = true;
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
             }
-        }
+        }, "linux-command-output");
+        readerThread.setDaemon(true);
+        readerThread.start();
+
+        boolean timedOut = false;
         try {
-            int code = process.waitFor();
-            return new ProcessResult(code, output.toString().trim());
+            while (true) {
+                if (process.waitFor(200, TimeUnit.MILLISECONDS)) {
+                    break;
+                }
+                if (Thread.currentThread().isInterrupted()) {
+                    stopCommandProcess(process);
+                    throw new InterruptedException("Command interrupted.");
+                }
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+                );
+                if (elapsedMs >= timeoutMs) {
+                    timedOut = true;
+                    stopCommandProcess(process);
+                    break;
+                }
+            }
+            readerThread.join(5000);
+            if (readerThread.isAlive()) {
+                try {
+                    process.getInputStream().close();
+                } catch (IOException ignored) {
+                }
+                readerThread.join(500);
+            }
+        } catch (InterruptedException failure) {
+            stopCommandProcess(process);
+            throw failure;
         } finally {
-            watchdog.interrupt();
+            readerThread.join(500);
+        }
+
+        int exitCode = timedOut ? 124 : process.exitValue();
+        String text;
+        synchronized (output) {
+            text = output.toString().trim();
+        }
+        if (timedOut) {
+            text = text
+                + (text.isEmpty() ? "" : "\n")
+                + "Command timed out after " + (timeoutMs / 1000) + " seconds.";
+        }
+        long durationMs = TimeUnit.NANOSECONDS.toMillis(
+            System.nanoTime() - startedAt
+        );
+        return new ProcessResult(exitCode, text, timedOut, durationMs);
+    }
+
+    private void stopCommandProcess(Process process) {
+        process.destroy();
+        try {
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor(2, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+            try {
+                process.waitFor(2, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -992,10 +1128,18 @@ public class LinuxEnvironment extends Plugin {
     private static final class ProcessResult {
         final int exitCode;
         final String output;
+        final boolean timedOut;
+        final long durationMs;
 
         ProcessResult(int exitCode, String output) {
+            this(exitCode, output, false, 0);
+        }
+
+        ProcessResult(int exitCode, String output, boolean timedOut, long durationMs) {
             this.exitCode = exitCode;
             this.output = output;
+            this.timedOut = timedOut;
+            this.durationMs = durationMs;
         }
     }
 }

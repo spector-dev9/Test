@@ -42,3 +42,26 @@ export function commandHint(command, output) {
 
   return null;
 }
+
+export function commandOutcome(result) {
+  const exitCode = Number.isInteger(result?.exitCode) ? result.exitCode : 0;
+  const timedOut = Boolean(result?.timedOut) || exitCode === 124;
+  const output = typeof result?.output === "string" ? result.output : "";
+  const durationMs = Number.isFinite(Number(result?.durationMs))
+    ? Math.max(0, Number(result.durationMs))
+    : null;
+  const ok = !timedOut
+    && (typeof result?.ok === "boolean" ? result.ok : exitCode === 0);
+  return {
+    ok,
+    exitCode,
+    timedOut,
+    output,
+    durationMs,
+    label: timedOut
+      ? "Timed out"
+      : ok && exitCode !== 0
+        ? `Exit ${exitCode} (verified)`
+        : `Exit ${exitCode}`,
+  };
+}

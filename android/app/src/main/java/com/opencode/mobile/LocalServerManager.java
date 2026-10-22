@@ -32,6 +32,7 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.io.RandomAccessFile;
 import java.net.InetAddress;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayDeque;
@@ -75,6 +76,10 @@ final class LocalServerManager {
 
     interface TransferCallback {
         void onResult(long bytes, String output, String error);
+    }
+
+    interface ImportProgress {
+        void onProgress(String phase, String message);
     }
 
     static final class Snapshot {
@@ -157,8 +162,14 @@ final class LocalServerManager {
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
         .build();
+    private final OkHttpClient transferClient = new OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build();
 
     private Process process;
+    private volatile Process importProcess;
+    private volatile boolean importCancelled;
     private Thread pumpThread;
     private ScheduledExecutorService watchdog;
     private ScheduledFuture<?> watchdogTask;
@@ -353,61 +364,338 @@ final class LocalServerManager {
         });
     }
 
-    void importSession(Uri source, TransferCallback callback) {
+    void importSession(
+        Uri source,
+        String directory,
+        TransferCallback callback,
+        ImportProgress listener
+    ) {
+        importCancelled = false;
         transferExecutor.execute(() -> {
+            File staged = null;
+            boolean cliStarted = false;
+            String sessionID = null;
+            SessionImport.Summary expected = null;
             try {
+                emitProgress(listener, "reading", "Reading the session file");
+                File temp = new File(context.getCacheDir(), "tmp");
+                mkdirs(temp);
+                staged = new File(
+                    temp,
+                    "session-import-" + System.currentTimeMillis() + ".json"
+                );
+                long bytes = copyImport(source, staged);
+                checkCancelled();
+
+                emitProgress(listener, "validating", "Checking the session format");
+                expected = SessionImport.inspect(staged);
+                sessionID = expected.sessionID;
+                checkCancelled();
+
+                emitProgress(listener, "checking", "Preparing the local runtime");
                 CliContext cli = prepareCli();
-                File staged = new File(cli.temp, "session-import-" + System.currentTimeMillis() + ".json");
-                try {
-                    try (InputStream input = context.getContentResolver().openInputStream(source)) {
-                        if (input == null) {
-                            throw new IOException("The selected session file could not be read.");
-                        }
-                        try (OutputStream output = new FileOutputStream(staged)) {
-                            byte[] buffer = new byte[128 * 1024];
-                            int read;
-                            long total = 0;
-                            while ((read = input.read(buffer)) != -1) {
-                                total += read;
-                                if (total > 512L * 1024L * 1024L) {
-                                    throw new IOException("The session file is too large to import.");
-                                }
-                                output.write(buffer, 0, read);
-                            }
-                        }
-                    }
-
-                    ProcessBuilder builder = new ProcessBuilder(
-                        cliCommand(cli, "--pure", "import", staged.getAbsolutePath())
-                    );
-                    builder.directory(cli.workspace);
-                    builder.redirectErrorStream(true);
-                    configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
-                    configureTransferEnvironment(builder);
-                    Process process = builder.start();
-
-                    StringBuilder output = new StringBuilder();
-                    Thread outputPump = captureAsync(process.getInputStream(), output, "opencode-import-output");
-
-                    if (!process.waitFor(TRANSFER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                        process.destroyForcibly();
-                        throw new IOException("The session import timed out.");
-                    }
-                    outputPump.join(5000);
-                    if (process.exitValue() != 0) {
+                File projectDirectory = importDirectory(directory, cli.workspace);
+                emitProgress(listener, "checking", "Checking the local server for this session");
+                SessionImport.Summary existing = serverMessageCount(
+                    projectDirectory,
+                    sessionID
+                );
+                if (existing != null) {
+                    if (existing.messages == expected.messages
+                        && existing.parts == expected.parts) {
                         throw new IOException(
-                            "The session import failed: " + tail(output.toString(), "exit code " + process.exitValue())
+                            "This session is already imported ("
+                                + expected.messages
+                                + " messages, "
+                                + expected.parts
+                                + " parts). Nothing was changed."
                         );
                     }
-                    callback.onResult(0, tail(output.toString(), "Session imported."), null);
-                } finally {
-                    staged.delete();
+                    if (existing.messages > expected.messages
+                        || existing.parts > expected.parts) {
+                        throw new IOException(
+                            "A session with this ID already exists on the server with more data. "
+                                + "The import will not overwrite it."
+                        );
+                    }
+                    emitProgress(
+                        listener,
+                        "importing",
+                        "Completing a previous partial import"
+                    );
                 }
+
+                checkCancelled();
+                emitProgress(listener, "importing", "Importing messages into the local server");
+                ProcessBuilder builder = new ProcessBuilder(
+                    cliCommand(cli, "--pure", "import", staged.getAbsolutePath())
+                );
+                builder.directory(projectDirectory);
+                builder.redirectErrorStream(true);
+                configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
+                configureTransferEnvironment(builder);
+                Process process = builder.start();
+                cliStarted = true;
+                importProcess = process;
+
+                StringBuilder output = new StringBuilder();
+                Thread outputPump = captureAsync(
+                    process.getInputStream(),
+                    output,
+                    "opencode-import-output"
+                );
+                long timeoutSeconds = Math.min(
+                    600L,
+                    TRANSFER_TIMEOUT_SECONDS + Math.max(0L, bytes / (1024L * 1024L)) * 2L
+                );
+                waitForImport(process, timeoutSeconds);
+                outputPump.join(5000);
+                if (process.exitValue() != 0) {
+                    throw new IOException(
+                        "The session import failed: "
+                            + tail(output.toString(), "exit code " + process.exitValue())
+                    );
+                }
+
+                checkCancelled();
+                emitProgress(listener, "verifying", "Confirming the imported conversation");
+                SessionImport.Summary confirmed = verifyImport(
+                    projectDirectory,
+                    expected
+                );
+                checkCancelled();
+                callback.onResult(
+                    bytes,
+                    String.format(
+                        Locale.US,
+                        "Imported and verified %,d messages (%,d parts).",
+                        confirmed.messages,
+                        confirmed.parts
+                    ),
+                    null
+                );
             } catch (Throwable failure) {
                 Log.e(TAG, "Session import failed", failure);
-                callback.onResult(0, "", describe(failure));
+                callback.onResult(0, "", importFailureMessage(failure, cliStarted, expected));
+            } finally {
+                importProcess = null;
+                importCancelled = false;
+                if (staged != null) staged.delete();
             }
         });
+    }
+
+    void cancelImport() {
+        importCancelled = true;
+        Process running = importProcess;
+        if (running != null) {
+            running.destroy();
+        }
+    }
+
+    private static void emitProgress(ImportProgress listener, String phase, String message) {
+        if (listener == null) return;
+        try {
+            listener.onProgress(phase, message);
+        } catch (Throwable failure) {
+            Log.w(TAG, "Import progress listener failed", failure);
+        }
+    }
+
+    private String importFailureMessage(
+        Throwable failure,
+        boolean cliStarted,
+        SessionImport.Summary expected
+    ) {
+        String detail = describe(failure);
+        if (importCancelled) {
+            return "Import cancelled. No confirmation was received from the local server.";
+        }
+        if (cliStarted && expected != null) {
+            return detail
+                + " The session may contain only some messages. Import it again to complete it.";
+        }
+        return detail;
+    }
+
+    private long copyImport(Uri source, File staged) throws IOException {
+        long total = 0;
+        try (
+            InputStream input = context.getContentResolver().openInputStream(source);
+            OutputStream output = new FileOutputStream(staged)
+        ) {
+            if (input == null) {
+                throw new IOException("The selected session file could not be read.");
+            }
+            byte[] buffer = new byte[128 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > SessionImport.MAX_FILE_BYTES) {
+                    throw new IOException(
+                        "The session file is too large to import safely. The limit is 64 MB."
+                    );
+                }
+                output.write(buffer, 0, read);
+                if (importCancelled) {
+                    throw new IOException("Import cancelled.");
+                }
+            }
+        }
+        return total;
+    }
+
+    private void checkCancelled() throws IOException {
+        if (importCancelled) {
+            throw new IOException("Import cancelled.");
+        }
+    }
+
+    private void waitForImport(Process running, long timeoutSeconds) throws IOException {
+        long deadline = System.nanoTime()
+            + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        try {
+            while (true) {
+                if (importCancelled) {
+                    stopImportProcess(running);
+                    throw new IOException("Import cancelled.");
+                }
+                if (running.waitFor(200, TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+                if (System.nanoTime() >= deadline) {
+                    stopImportProcess(running);
+                    throw new IOException(
+                        "The session import timed out after "
+                            + timeoutSeconds
+                            + " seconds."
+                    );
+                }
+            }
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            stopImportProcess(running);
+            throw new IOException("The session import was interrupted.", failure);
+        }
+    }
+
+    private void stopImportProcess(Process running) {
+        running.destroy();
+        try {
+            if (!running.waitFor(2, TimeUnit.SECONDS)) {
+                running.destroyForcibly();
+                running.waitFor(2, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            running.destroyForcibly();
+            try {
+                running.waitFor(2, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private SessionImport.Summary serverMessageCount(
+        File projectDirectory,
+        String sessionID
+    ) throws IOException {
+        Request request = new Request.Builder()
+            .url(sessionMessagesUrl(projectDirectory, sessionID))
+            .get()
+            .build();
+        Response response;
+        try {
+            response = transferClient.newCall(request).execute();
+        } catch (IOException failure) {
+            throw new IOException(
+                "The local server is not reachable. Start it before importing a session.",
+                failure
+            );
+        }
+        try (Response closeable = response) {
+            if (response.code() == 404) {
+                return null;
+            }
+            if (!response.isSuccessful()) {
+                throw new IOException(
+                    "The local server could not check this session (HTTP "
+                        + response.code()
+                        + ")."
+                );
+            }
+            ResponseBody body = response.body();
+            if (body == null) {
+                throw new IOException("The local server returned no session data.");
+            }
+            return SessionImport.countServerMessages(body.byteStream());
+        }
+    }
+
+    private SessionImport.Summary verifyImport(
+        File projectDirectory,
+        SessionImport.Summary expected
+    ) throws IOException {
+        SessionImport.Summary last = null;
+        for (int attempt = 0; attempt < 12; attempt++) {
+            checkCancelled();
+            last = serverMessageCount(projectDirectory, expected.sessionID);
+            if (last != null
+                && last.messages == expected.messages
+                && last.parts == expected.parts) {
+                return last;
+            }
+            try {
+                Thread.sleep(400);
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Import verification was interrupted.", failure);
+            }
+        }
+        if (last == null) {
+            throw new IOException(
+                "The import finished, but the local server did not list the session. "
+                    + "Refresh the server and try again."
+            );
+        }
+        throw new IOException(
+            "The import finished, but the local server has "
+                + last.messages
+                + " of "
+                + expected.messages
+                + " messages ("
+                + last.parts
+                + " of "
+                + expected.parts
+                + " parts). Import the same file again to complete it."
+        );
+    }
+
+    private String sessionMessagesUrl(File projectDirectory, String sessionID)
+        throws IOException {
+        return URL
+            + "/session/"
+            + sessionID
+            + "/message?directory="
+            + URLEncoder.encode(projectDirectory.getAbsolutePath(), "UTF-8");
+    }
+
+    private File importDirectory(String value, File fallback) throws IOException {
+        if (value == null || value.trim().isEmpty()) return fallback;
+        try {
+            File directory = new File(value.trim()).getCanonicalFile();
+            if (!directory.isDirectory()) {
+                throw new IOException("The selected project folder is not available.");
+            }
+            return directory;
+        } catch (IOException failure) {
+            if (failure.getMessage() != null
+                && failure.getMessage().startsWith("The selected project")) {
+                throw failure;
+            }
+            throw new IOException("The selected project folder is not available.", failure);
+        }
     }
 
     private void configureTransferEnvironment(ProcessBuilder builder) {

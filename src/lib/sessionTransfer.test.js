@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_SESSION_IMPORT_BYTES,
+  createSingleFlight,
   formatTransferBytes,
+  importSessionFromFile,
   isSessionTransferSupported,
   sessionExportFileName,
+  validateSessionImportFile,
 } from "./sessionTransfer.js";
 
 test("sessionExportFileName matches the opencode slug style", () => {
@@ -48,4 +52,41 @@ test("formatTransferBytes renders human sizes", () => {
 
 test("session transfer is unavailable outside the Android app", () => {
   assert.equal(isSessionTransferSupported(), false);
+});
+
+test("rejects an oversized import before reading its contents", () => {
+  assert.equal(validateSessionImportFile({ size: 1024 }).ok, true);
+  assert.equal(
+    validateSessionImportFile({ size: MAX_SESSION_IMPORT_BYTES }).ok,
+    true,
+  );
+
+  const result = validateSessionImportFile({
+    size: MAX_SESSION_IMPORT_BYTES + 1,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /64 MB/);
+});
+
+test("allows a missing size so native validation remains the fallback", () => {
+  assert.equal(validateSessionImportFile({}).ok, true);
+  assert.equal(validateSessionImportFile(null).ok, true);
+});
+
+test("only one transfer can be active at a time", () => {
+  const guard = createSingleFlight();
+  assert.equal(guard.begin(), true);
+  assert.equal(guard.begin(), false);
+  assert.equal(guard.active, true);
+  guard.end();
+  assert.equal(guard.begin(), true);
+  guard.end();
+  assert.equal(guard.active, false);
+});
+
+test("import failures are surfaced instead of being treated as success", async () => {
+  await assert.rejects(
+    importSessionFromFile({ uri: "content://session.json" }),
+    /only available in the Android app/,
+  );
 });

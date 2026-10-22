@@ -22,7 +22,7 @@ import {
   runLinuxCommand,
 } from "../lib/linuxEnvironment.js";
 import { readUiPrefs } from "../lib/uiPrefs.js";
-import { commandHint } from "../lib/shell.js";
+import { commandHint, commandOutcome } from "../lib/shell.js";
 import { copyText } from "../lib/clipboard";
 
 const RESIZE_DEBOUNCE_MS = 220;
@@ -652,13 +652,17 @@ export function TerminalView({
     setLinuxRunning(true);
     try {
       const result = await runLinuxCommand(command, directory);
-      const hint = commandHint(command, result.output);
+      const outcome = commandOutcome(result);
+      const hint = commandHint(command, outcome.output);
+      const elapsed =
+        outcome.durationMs === null ? "" : ` (${outcome.durationMs} ms)`;
       setLinuxOutput((previous) =>
         previous +
-          `$ ${command}\n${result.output}\n` +
+          `$ ${command}\n${outcome.output}\n` +
+          `[${outcome.label}${elapsed}]\n` +
           (hint ? `Hint: ${hint}\n` : "")
       );
-      setLinuxCommand("");
+      if (outcome.ok) setLinuxCommand("");
     } catch (failure) {
       setLinuxOutput((previous) =>
         previous + `$ ${command}\nError: ${failure.message}\n`
