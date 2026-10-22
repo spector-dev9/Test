@@ -16,7 +16,7 @@ function normalizeTokens(tokens) {
   };
 }
 
-export function tokenTotal(tokens) {
+function tokenTotal(tokens) {
   if (!tokens) return 0;
   return (
     tokens.input +

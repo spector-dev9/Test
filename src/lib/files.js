@@ -66,7 +66,7 @@ export function isPatchableFilePath(value) {
   return Boolean(normalizePatchPath(value));
 }
 
-export function splitFileLines(content) {
+function splitFileLines(content) {
   if (content === "") {
     return { lines: [], trailingNewline: false };
   }
@@ -339,8 +339,4 @@ export function fileLanguage(path) {
 
 export function basename(path) {
   return String(path ?? "").split("/").pop() || path || "File";
-}
-
-export function projectFilePath(root, path) {
-  return root && path ? `${root}/${path}` : "";
 }

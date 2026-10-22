@@ -327,7 +327,7 @@ export function isConversationSettled(rows) {
   return false;
 }
 
-export function normalizeModelVariants(variants) {
+function normalizeModelVariants(variants) {
   if (!variants || typeof variants !== "object" || Array.isArray(variants)) {
     return [];
   }
