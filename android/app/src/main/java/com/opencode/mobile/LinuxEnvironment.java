@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,6 +61,8 @@ public class LinuxEnvironment extends Plugin {
     private static final String ASSET_ROOTFS_TAR = "linux/alpine-minirootfs.tar";
     private static final String ASSET_ROOTFS_GZ = "linux/alpine-minirootfs.tar.gz";
     private static final String RESOLV_CONF = "nameserver 1.1.1.1\nnameserver 8.8.8.8\n";
+    private static final String ALPINE_NODE_REPOSITORY =
+        "https://dl-cdn.alpinelinux.org/alpine/v3.21/main";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
     private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
 
@@ -90,6 +93,7 @@ public class LinuxEnvironment extends Plugin {
         executor.execute(() -> {
             try {
                 File rootfs = ensureRootfs();
+                configurePackageRepository(rootfs);
                 ensureProot();
                 writeResolv(rootfs);
                 writeText(new File(rootfs, MARKER_READY), "1\n");
@@ -146,14 +150,41 @@ public class LinuxEnvironment extends Plugin {
                 }
                 ProcessResult result =
                     runLinuxCommand("apk add --no-cache " + pkg, directory);
+                String output = result.output;
+                // apk runs post-install triggers (busybox reindexes /bin and
+                // /usr/bin); under PRoot one can fail after the package itself
+                // is installed. Verify the package before reporting that case.
+                if (result.exitCode != 0 && allPackagesInstalled(pkg)) {
+                    output = output
+                        + "\nNote: apk reported an error, but " + pkg
+                        + " is installed and ready to use. The error came from a"
+                        + " post-install trigger and can be ignored.";
+                }
                 JSObject res = new JSObject();
                 res.put("exitCode", result.exitCode);
-                res.put("output", result.output);
+                res.put("output", output);
                 finish(call, res);
             } catch (Exception failure) {
                 reject(call, failure, null);
             }
         });
+    }
+
+    private boolean allPackagesInstalled(String pkgSpec) {
+        for (String spec : pkgSpec.trim().split("\\s+")) {
+            String name = spec.split("[=@]", 2)[0];
+            if (!name.matches("[A-Za-z0-9._+-]+")) {
+                return false;
+            }
+            try {
+                if (runLinuxCommand("apk info -e " + name, null).exitCode != 0) {
+                    return false;
+                }
+            } catch (Exception failure) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @PluginMethod
@@ -304,6 +335,25 @@ public class LinuxEnvironment extends Plugin {
         writeText(resolv, RESOLV_CONF);
     }
 
+    private void configurePackageRepository(File rootfs) throws IOException {
+        File repositories = new File(rootfs, "etc/apk/repositories");
+        if (!repositories.isFile()) {
+            return;
+        }
+        String current = new String(
+            Files.readAllBytes(repositories.toPath()),
+            StandardCharsets.UTF_8
+        );
+        // Alpine 3.20 ships Node.js 20.15, which npm rejects when it resolves
+        // optional dependencies that need ^20.19 or newer (Vite 8, ESLint 10).
+        // Node.js 22 from 3.21 keeps the rest of the 3.20 base in place.
+        if (!current.contains("v3.20/") || current.contains("v3.21/main")) {
+            return;
+        }
+        String next = current.endsWith("\n") ? current : current + "\n";
+        writeText(repositories, next + ALPINE_NODE_REPOSITORY + "\n");
+    }
+
     private File resolveWorkspace(String value) {
         if (value == null || value.trim().isEmpty()) return null;
 
@@ -352,7 +402,7 @@ public class LinuxEnvironment extends Plugin {
         argv.add(workspace == null ? "/root" : workspace.getAbsolutePath());
         argv.add("/usr/bin/env");
         argv.add("HOME=/root");
-        argv.add("PATH=/bin:/usr/bin:/sbin:/usr/sbin");
+        argv.add("PATH=/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:/usr/sbin");
         argv.add("SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt");
         argv.add("SSL_CERT_DIR=/etc/ssl/certs");
         argv.add("sh");
