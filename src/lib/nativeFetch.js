@@ -58,6 +58,12 @@ const MAX_PERMISSION_MESSAGE_CHARS = 2000;
 const MAX_QUESTION_ANSWER_CHARS = 500;
 const MAX_QUESTION_ANSWERS = 20;
 const MAX_FILE_SEARCH_CHARS = 200;
+const MAX_PTY_SHELL_PATH_CHARS = 4096;
+const MAX_PTY_SHELL_ARGS = 64;
+const MAX_PTY_SHELL_ARG_CHARS = 4096;
+const MAX_PTY_SHELL_ENV_KEYS = 32;
+const MAX_PTY_SHELL_ENV_VALUE_CHARS = 4096;
+const PTY_SHELL_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PERMISSION_REPLIES = ["once", "always", "reject"];
 
 export const MAX_REQUEST_BYTES = 3 * 1024 * 1024;
@@ -396,7 +402,7 @@ function validateShellBody(body) {
 }
 
 function validatePtyCreateBody(body) {
-  exactKeys(body, ["title"]);
+  exactKeys(body, ["title", "command", "args", "cwd", "env"]);
 
   if (
     body.title !== undefined &&
@@ -405,6 +411,72 @@ function validatePtyCreateBody(body) {
       body.title.length > MAX_PTY_TITLE_CHARS)
   ) {
     throw invalidRequest("requires a valid terminal title.");
+  }
+
+  if (
+    body.command !== undefined &&
+    (typeof body.command !== "string" ||
+      !body.command.trim() ||
+      !body.command.trim().startsWith("/") ||
+      body.command.includes("\0") ||
+      body.command.length > MAX_PTY_SHELL_PATH_CHARS)
+  ) {
+    throw invalidRequest("requires a valid terminal command.");
+  }
+
+  if (body.args !== undefined) {
+    if (
+      !Array.isArray(body.args) ||
+      body.args.length > MAX_PTY_SHELL_ARGS
+    ) {
+      throw invalidRequest("requires valid terminal arguments.");
+    }
+
+    for (const argument of body.args) {
+      if (
+        typeof argument !== "string" ||
+        argument.includes("\0") ||
+        argument.length > MAX_PTY_SHELL_ARG_CHARS
+      ) {
+        throw invalidRequest("requires valid terminal arguments.");
+      }
+    }
+  }
+
+  if (
+    body.cwd !== undefined &&
+    (typeof body.cwd !== "string" ||
+      !body.cwd.startsWith("/") ||
+      body.cwd.includes("\0") ||
+      body.cwd.length > MAX_PTY_SHELL_PATH_CHARS)
+  ) {
+    throw invalidRequest("requires a valid terminal directory.");
+  }
+
+  if (body.env !== undefined) {
+    if (
+      !body.env ||
+      typeof body.env !== "object" ||
+      Array.isArray(body.env)
+    ) {
+      throw invalidRequest("requires valid terminal environment values.");
+    }
+
+    const entries = Object.entries(body.env);
+    if (entries.length > MAX_PTY_SHELL_ENV_KEYS) {
+      throw invalidRequest("requires valid terminal environment values.");
+    }
+
+    for (const [key, value] of entries) {
+      if (
+        !PTY_SHELL_ENV_KEY.test(key) ||
+        typeof value !== "string" ||
+        value.includes("\0") ||
+        value.length > MAX_PTY_SHELL_ENV_VALUE_CHARS
+      ) {
+        throw invalidRequest("requires valid terminal environment values.");
+      }
+    }
   }
 }
 

@@ -688,6 +688,16 @@ test("creates, resizes, and closes project terminals", async (t) => {
     }),
     terminal,
   );
+  assert.deepEqual(
+    await api.createProjectTerminal(PROJECT_DIRECTORY, {
+      title: "Alpine",
+      command: "/data/app/libproot.so",
+      args: ["--link2symlink", "-0", "/bin/ash"],
+      cwd: PROJECT_DIRECTORY,
+      env: { HOME: "/root", PATH: "/bin:/usr/bin" },
+    }),
+    terminal,
+  );
   await api.resizeProjectTerminal(PROJECT_DIRECTORY, terminal.id, {
     cols: 90,
     rows: 30,
@@ -701,6 +711,17 @@ test("creates, resizes, and closes project terminals", async (t) => {
     [
       "create",
       { directory: PROJECT_DIRECTORY, title: "Shell" },
+    ],
+    [
+      "create",
+      {
+        directory: PROJECT_DIRECTORY,
+        title: "Alpine",
+        command: "/data/app/libproot.so",
+        args: ["--link2symlink", "-0", "/bin/ash"],
+        cwd: PROJECT_DIRECTORY,
+        env: { HOME: "/root", PATH: "/bin:/usr/bin" },
+      },
     ],
     [
       "update",

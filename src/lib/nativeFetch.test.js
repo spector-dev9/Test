@@ -483,6 +483,33 @@ test("allows validated PTY create, resize, and close writes", async () => {
   assert.deepEqual(http.calls[0].data, { title: "Shell" });
   assert.equal(http.calls[0].method, "POST");
 
+  const alpine = {
+    title: "Alpine",
+    command:
+      "/data/app/~~abc==/com.opencode.mobile-xyz==/lib/arm64/libproot.so",
+    args: [
+      "--link2symlink",
+      "-0",
+      "-r",
+      PROJECT_DIRECTORY,
+      "-b",
+      "/dev/",
+      "-w",
+      PROJECT_DIRECTORY,
+      "/bin/ash",
+    ],
+    cwd: PROJECT_DIRECTORY,
+    env: {
+      HOME: "/root",
+      PATH: "/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:/usr/sbin",
+      PROOT_TMP_DIR: "/data/user/0/com.opencode.mobile/cache/proot",
+    },
+  };
+  const custom = await nativeFetch(base.href, jsonRequest(alpine));
+  assert.equal(custom.status, 200);
+  assert.deepEqual(http.calls[1].data, alpine);
+  assert.equal(http.calls[1].method, "POST");
+
   const item = new URL(
     `/pty/${terminal.id}`,
     "http://127.0.0.1:4097",
@@ -493,15 +520,15 @@ test("allows validated PTY create, resize, and close writes", async () => {
     jsonRequest({ size: { cols: 90, rows: 30 } }, "PUT"),
   );
   assert.equal(resized.status, 200);
-  assert.deepEqual(http.calls[1].data, {
+  assert.deepEqual(http.calls[2].data, {
     size: { cols: 90, rows: 30 },
   });
-  assert.equal(http.calls[1].method, "PUT");
+  assert.equal(http.calls[2].method, "PUT");
 
   const removed = await nativeFetch(item.href, { method: "DELETE" });
   assert.equal(removed.status, 200);
-  assert.equal(http.calls[2].method, "DELETE");
-  assert.equal(http.calls[2].data, undefined);
+  assert.equal(http.calls[3].method, "DELETE");
+  assert.equal(http.calls[3].data, undefined);
 });
 
 test("rejects malformed PTY writes", async () => {
@@ -515,22 +542,75 @@ test("rejects malformed PTY writes", async () => {
   const cases = [
     {
       url: base.href,
-      body: { title: "Shell", command: "/bin/sh" },
-    },
-    {
-      url: base.href,
+      method: "POST",
       body: { title: "" },
     },
     {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "bin/sh" },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh\0" },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh", args: "sh" },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh", args: [1] },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh", cwd: "relative" },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh", env: [] },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: {
+        title: "Shell",
+        command: "/bin/sh",
+        env: { "BAD-KEY": "value" },
+      },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: {
+        title: "Shell",
+        command: "/bin/sh",
+        env: { HOME: 1 },
+      },
+    },
+    {
+      url: base.href,
+      method: "POST",
+      body: { title: "Shell", command: "/bin/sh", extra: true },
+    },
+    {
       url: item.href,
+      method: "PUT",
       body: { size: { cols: 2, rows: 30 } },
     },
     {
       url: item.href,
+      method: "PUT",
       body: { size: { cols: 90, rows: 300 } },
     },
     {
       url: item.href,
+      method: "PUT",
       body: { size: { cols: 90, rows: 30 }, extra: true },
     },
     {
@@ -539,6 +619,7 @@ test("rejects malformed PTY writes", async () => {
           encodeURIComponent(PROJECT_DIRECTORY),
         "http://127.0.0.1:4097",
       ).href,
+      method: "PUT",
       body: { size: { cols: 90, rows: 30 } },
     },
   ];
@@ -548,7 +629,7 @@ test("rejects malformed PTY writes", async () => {
     await assert.rejects(
       createNativeFetch(http)(
         item.url,
-        jsonRequest(item.body, "PUT"),
+        jsonRequest(item.body, item.method),
       ),
       TypeError,
     );
