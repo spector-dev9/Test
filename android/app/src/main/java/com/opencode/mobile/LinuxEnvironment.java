@@ -65,6 +65,7 @@ public class LinuxEnvironment extends Plugin {
         "https://dl-cdn.alpinelinux.org/alpine/v3.21/main";
     private static final long MAX_ROOTFS_BYTES = 512L * 1024 * 1024 * 1024L;
     private static final long COMMAND_TIMEOUT_MS = 10 * 60 * 1000L;
+    private static final Object COMMAND_LOCK = new Object();
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final OkHttpClient client = new OkHttpClient.Builder()
@@ -492,6 +493,42 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private ProcessResult runLinuxCommand(String command, String directory)
+        throws Exception {
+        synchronized (COMMAND_LOCK) {
+            ProcessResult result = runLinuxCommandOnce(command, directory);
+            if (!isApkCommand(command) || !isApkLockError(result.output)) {
+                return result;
+            }
+            runLinuxCommandOnce(
+                "pkill -9 -x apk 2>/dev/null; rm -f /lib/apk/db/lock 2>/dev/null; sleep 1",
+                null);
+            result = runLinuxCommandOnce(command, directory);
+            if (isApkLockError(result.output)) {
+                runLinuxCommandOnce(
+                    "pkill -9 -x apk 2>/dev/null; rm -f /lib/apk/db/lock 2>/dev/null; sleep 1",
+                    null);
+                result = runLinuxCommandOnce(command, directory);
+            }
+            return result;
+        }
+    }
+
+    private static boolean isApkCommand(String command) {
+        if (command == null) {
+            return false;
+        }
+        String trimmed = command.trim();
+        return trimmed.startsWith("apk ")
+            || trimmed.matches("(?s).*[;&|]\\s*apk\\s+.*");
+    }
+
+    private static boolean isApkLockError(String output) {
+        return output != null
+            && output.contains("Unable to lock database")
+            && output.contains("temporary error");
+    }
+
+    private ProcessResult runLinuxCommandOnce(String command, String directory)
         throws Exception {
         File rootfs = rootfsPath();
         File proot = prootPath();

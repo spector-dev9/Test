@@ -147,6 +147,7 @@ final class LocalServerManager {
         .build();
     private static final int HEALTH_CHECK_INTERVAL_SECONDS = 30;
     private static final int MAX_HEALTH_FAILURES = 2;
+    private static final long TRANSFER_TIMEOUT_SECONDS = 120;
 
     private final Object lock = new Object();
     private final ArrayDeque<String> logs = new ArrayDeque<>();
@@ -310,9 +311,10 @@ final class LocalServerManager {
             long bytes = 0;
             try {
                 CliContext cli = prepareCli();
-                ProcessBuilder builder = new ProcessBuilder(cliCommand(cli, "export", sessionID));
+                ProcessBuilder builder = new ProcessBuilder(cliCommand(cli, "--pure", "export", sessionID));
                 builder.directory(cli.workspace);
                 configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
+                configureTransferEnvironment(builder);
                 Process process = builder.start();
 
                 StringBuilder errors = new StringBuilder();
@@ -333,7 +335,7 @@ final class LocalServerManager {
                     output.flush();
                 }
 
-                if (!process.waitFor(5, TimeUnit.MINUTES)) {
+                if (!process.waitFor(TRANSFER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     process.destroyForcibly();
                     throw new IOException("The session export timed out.");
                 }
@@ -376,17 +378,18 @@ final class LocalServerManager {
                     }
 
                     ProcessBuilder builder = new ProcessBuilder(
-                        cliCommand(cli, "import", staged.getAbsolutePath())
+                        cliCommand(cli, "--pure", "import", staged.getAbsolutePath())
                     );
                     builder.directory(cli.workspace);
                     builder.redirectErrorStream(true);
                     configureEnvironment(builder, cli.meta, cli.files, cli.home, cli.workspace, cli.temp);
+                    configureTransferEnvironment(builder);
                     Process process = builder.start();
 
                     StringBuilder output = new StringBuilder();
                     Thread outputPump = captureAsync(process.getInputStream(), output, "opencode-import-output");
 
-                    if (!process.waitFor(5, TimeUnit.MINUTES)) {
+                    if (!process.waitFor(TRANSFER_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                         process.destroyForcibly();
                         throw new IOException("The session import timed out.");
                     }
@@ -405,6 +408,15 @@ final class LocalServerManager {
                 callback.onResult(0, "", describe(failure));
             }
         });
+    }
+
+    private void configureTransferEnvironment(ProcessBuilder builder) {
+        Map<String, String> environment = builder.environment();
+        environment.put("OPENCODE_DISABLE_MODELS_FETCH", "1");
+        environment.put("OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER", "1");
+        environment.put("OPENCODE_DISABLE_LSP_DOWNLOAD", "1");
+        environment.put("OPENCODE_DISABLE_DEFAULT_PLUGINS", "1");
+        environment.put("OPENCODE_DISABLE_FFF", "1");
     }
 
     private CliContext prepareCli() throws Exception {
