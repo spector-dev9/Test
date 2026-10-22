@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { projectLabel } from "../lib/project";
+import { CopyButton } from "./CopyButton";
 import { parseUnifiedPatch } from "../lib/diff";
 import {
   patchForFile,
@@ -54,9 +55,42 @@ export function ChangesView({
   connected,
   project,
   onOpenFile,
+  onRevertFile,
 }) {
   const summary = summarizeDiffs(changes.files);
   const [viewMode, setViewMode] = useState("split");
+  const [revertingPath, setRevertingPath] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+
+  async function revertFile(path, patch) {
+    if (!connected || !patch || revertingPath) return;
+
+    if (
+      !window.confirm(
+        `Revert ${path}? This discards its uncommitted changes and cannot be undone from this screen.`,
+      )
+    ) {
+      return;
+    }
+
+    setRevertingPath(path);
+    setActionError("");
+    setActionMessage("");
+
+    try {
+      await onRevertFile?.(path, patch);
+      setActionMessage(`Reverted ${path}.`);
+    } catch (error) {
+      setActionError(
+        error instanceof Error && error.message
+          ? error.message
+          : "The file could not be reverted.",
+      );
+    } finally {
+      setRevertingPath("");
+    }
+  }
 
   return (
     <section className="page-view" aria-labelledby="changes-heading">
@@ -146,6 +180,18 @@ export function ChangesView({
         </p>
       ) : null}
 
+      {actionError ? (
+        <div className="inline-error page-error" role="alert">
+          <span>{actionError}</span>
+        </div>
+      ) : null}
+
+      {actionMessage ? (
+        <div className="panel-note" role="status">
+          {actionMessage}
+        </div>
+      ) : null}
+
       {changes.status === "ready" && changes.files.length === 0 ? (
         <div className="empty-panel">
           <strong>No uncommitted changes in this project.</strong>
@@ -178,6 +224,20 @@ export function ChangesView({
                   </span>
                 </summary>
                 <div className="diff-file-actions">
+                  <CopyButton
+                    text={path}
+                    label="Copy path"
+                    title={`Copy ${path}`}
+                    className="compact-button"
+                  />
+                  {patch ? (
+                    <CopyButton
+                      text={patch}
+                      label="Copy diff"
+                      title={`Copy the diff for ${path}`}
+                      className="compact-button"
+                    />
+                  ) : null}
                   <button
                     type="button"
                     className="secondary-button compact-button"
@@ -186,6 +246,19 @@ export function ChangesView({
                     title="Open this file in the editor"
                   >
                     Open file
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button compact-button"
+                    onClick={() => revertFile(path, patch)}
+                    disabled={!connected || !patch || Boolean(revertingPath)}
+                    title={
+                      patch
+                        ? `Revert uncommitted changes in ${path}`
+                        : "A patch is required to revert this file"
+                    }
+                  >
+                    {revertingPath === path ? "Reverting…" : "Revert file"}
                   </button>
                 </div>
                 {patch ? (

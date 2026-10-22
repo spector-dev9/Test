@@ -750,7 +750,7 @@ export function FilesView({ directory, connected, project, active, intent }) {
     const path = normalizePatchPath(newPath);
     if (!path) {
       setCreateError(
-        "Use a relative path without spaces, quotes, or ../ segments.",
+        "Use a relative path without quotes, control characters, or ../ segments.",
       );
       return;
     }

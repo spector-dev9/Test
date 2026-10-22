@@ -147,6 +147,7 @@ export function TerminalView({
   const [status, setStatus] = useState("connecting");
   const [error, setError] = useState(null);
   const [terminalCopied, setTerminalCopied] = useState(false);
+  const [terminalCopyError, setTerminalCopyError] = useState("");
   const [terminalReady, setTerminalReady] = useState(false);
   const [linuxSupported, setLinuxSupported] = useState(false);
   const [linuxReady, setLinuxReady] = useState(false);
@@ -436,7 +437,7 @@ export function TerminalView({
       return {
         options: {
           command: shell.command,
-          args: [...shell.args, "/bin/ash", "-l"],
+          args: [...shell.args, "/bin/ash"],
           cwd: shell.cwd || directory,
           env: shell.env,
         },
@@ -633,13 +634,24 @@ export function TerminalView({
     setAttempt((value) => value + 1);
   }
 
-  function copyTerminalOutput() {
+  async function copyTerminalOutput() {
     const text = extractTerminalText(terminalRef.current);
-    if (!text.trim()) return;
-    copyText(text).then(() => {
+    if (!text.trim()) {
+      setTerminalCopyError("There is no terminal output to copy yet.");
+      return;
+    }
+
+    try {
+      await copyText(text);
+      setTerminalCopyError("");
       setTerminalCopied(true);
       setTimeout(() => setTerminalCopied(false), 1500);
-    });
+    } catch {
+      setTerminalCopied(false);
+      setTerminalCopyError(
+        "The terminal output could not be copied. Select the text and copy it manually.",
+      );
+    }
   }
 
   function clearTerminal() {
@@ -957,6 +969,12 @@ export function TerminalView({
         {shellMode === "alpine" && shellError ? (
           <div className="inline-error terminal-error" role="alert">
             <span>{shellError}</span>
+          </div>
+        ) : null}
+
+        {terminalCopyError ? (
+          <div className="inline-error terminal-error" role="alert">
+            <span>{terminalCopyError}</span>
           </div>
         ) : null}
 

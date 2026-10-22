@@ -210,7 +210,7 @@ function toolInputText(input) {
   if (!input || typeof input !== "object") return "";
 
   try {
-    return truncate(JSON.stringify(input, null, 2), MAX_TOOL_INPUT_CHARS);
+    return JSON.stringify(input, null, 2);
   } catch {
     return "";
   }
@@ -226,6 +226,8 @@ export function normalizeToolPart(part) {
     typeof state.output === "string" ? state.output : "";
   const error = typeof state.error === "string" ? state.error : "";
 
+  const inputText = toolInputText(input);
+
   return {
     id: part?.id,
     name:
@@ -237,9 +239,12 @@ export function normalizeToolPart(part) {
         : "",
     detail: summary.slice(0, 300),
     summary,
-    input: toolInputText(input),
+    input: truncate(inputText, MAX_TOOL_INPUT_CHARS),
+    inputFull: inputText,
     output: truncate(output, MAX_TOOL_OUTPUT_CHARS),
+    outputFull: output,
     error: truncate(error, 2000),
+    errorFull: error,
   };
 }
 
@@ -313,6 +318,16 @@ export function normalizeConversation(rows) {
       },
     ];
   });
+}
+
+export function conversationBeforeRevert(rows, messageID) {
+  if (!Array.isArray(rows) || !messageID) return Array.isArray(rows) ? rows : [];
+  const index = rows.findIndex((row) => row?.info?.id === messageID);
+  return index < 0 ? rows : rows.slice(0, index);
+}
+
+export function isMessageIdentifier(value) {
+  return typeof value === "string" && /^msg_[A-Za-z0-9]+$/.test(value);
 }
 
 export function isConversationSettled(rows) {

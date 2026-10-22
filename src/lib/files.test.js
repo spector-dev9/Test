@@ -34,7 +34,12 @@ test("normalizes relative project paths without traversal", () => {
   }
 
   assert.equal(normalizePatchPath("src/App.jsx"), "src/App.jsx");
-  assert.equal(normalizePatchPath("src/with space.js"), null);
+  assert.equal(
+    normalizePatchPath("src/with space.js"),
+    "src/with space.js",
+  );
+  assert.equal(normalizePatchPath(" src/leading.js"), null);
+  assert.equal(normalizePatchPath("src/trailing.js "), null);
   assert.equal(normalizePatchPath("src/quote\".js"), null);
   assert.equal(normalizePatchPath(".git/config"), null);
   assert.equal(normalizePatchPath("src/.git/hooks/pre-commit"), null);
@@ -53,6 +58,43 @@ test("builds and validates a safe full-file patch", () => {
     path: "src/example.js",
     isNew: false,
   });
+});
+
+test("builds and validates patches for paths with spaces", () => {
+  const patch = buildFilePatch({
+    path: "docs/release notes.md",
+    previousContent: "old\n",
+    nextContent: "new\n",
+  });
+
+  assert.match(
+    patch,
+    /^diff --git a\/docs\/release notes\.md b\/docs\/release notes\.md$/m,
+  );
+  assert.deepEqual(validateFilePatch(patch), {
+    path: "docs/release notes.md",
+    isNew: false,
+  });
+
+  const newPatch = buildFilePatch({
+    path: "docs/new notes.md",
+    nextContent: "hello\n",
+    isNew: true,
+  });
+  assert.deepEqual(validateFilePatch(newPatch), {
+    path: "docs/new notes.md",
+    isNew: true,
+  });
+
+  assert.equal(
+    validateFilePatch(
+      patch.replace(
+        "+++ b/docs/release notes.md",
+        "+++ b/docs/other notes.md",
+      ),
+    ),
+    null,
+  );
 });
 
 test("builds patches for new files and missing trailing newlines", () => {
@@ -84,6 +126,22 @@ test("rejects unsafe or ambiguous patches", () => {
     path: "src/a.js",
     previousContent: "a\n",
     nextContent: "b\n",
+  });
+
+  const deletion = [
+    "diff --git a/src/a.js b/src/a.js",
+    "deleted file mode 100644",
+    "--- a/src/a.js",
+    "+++ /dev/null",
+    "@@ -1,1 +0,0 @@",
+    "-a",
+    "",
+  ].join("\n");
+
+  assert.deepEqual(validateFilePatch(deletion), {
+    path: "src/a.js",
+    isNew: false,
+    isDeleted: true,
   });
 
   assert.equal(

@@ -5,6 +5,7 @@ import {
   normalizePtyInfo,
   normalizePtyTitle,
   parsePtyMessage,
+  ptyCwdMatches,
   ptyWebSocketUrl,
   validateTerminalSize,
 } from "./pty.js";
@@ -38,6 +39,25 @@ test("normalizes PTY titles and metadata", () => {
     null,
   );
   assert.equal(normalizePtyInfo({ ...PTY, pid: "1" }, DIRECTORY), null);
+});
+
+test("matches Android app-data cwd aliases and trailing slashes", () => {
+  const project = "/data/data/com.opencode.mobile/files/workspace";
+  const canonical = "/data/user/0/com.opencode.mobile/files/workspace/";
+
+  assert.equal(ptyCwdMatches(canonical, project), true);
+  assert.equal(ptyCwdMatches(`${project}/`, project), true);
+  assert.equal(
+    ptyCwdMatches("/data/user/0/com.other.app/files/workspace", project),
+    false,
+  );
+  assert.equal(ptyCwdMatches("/root", project), false);
+  assert.equal(ptyCwdMatches(null, project), false);
+
+  assert.deepEqual(
+    normalizePtyInfo({ ...PTY, cwd: canonical }, project),
+    { ...PTY, cwd: canonical },
+  );
 });
 
 test("builds loopback WebSocket URLs", () => {

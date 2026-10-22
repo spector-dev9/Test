@@ -12,22 +12,38 @@ import {
 } from "./opencode.js";
 import { resetProjectDirectoryScope } from "./projectScope.js";
 
-test("classifies non-success HTTP results without exposing response bodies", () => {
-  const body = { message: "secret server detail" };
-
+test("surfaces the server's HTTP failure reason and reference", () => {
   assert.throws(
     () =>
       unwrapOpenCodeResult(
-        { error: body, response: { status: 503 } },
+        {
+          error: {
+            name: "UnknownError",
+            data: {
+              message: "Unexpected server error. Check server logs for details.",
+              ref: "err_abc123",
+            },
+          },
+          response: { status: 500 },
+        },
         "Fallback message.",
       ),
     (error) => {
       assert.equal(error.kind, CONNECTION_ERROR_KINDS.HTTP);
-      assert.equal(error.status, 503);
-      assert.equal(error.message, "The OpenCode server returned HTTP 503.");
-      assert.doesNotMatch(error.message, /secret/);
+      assert.equal(error.status, 500);
+      assert.match(error.message, /Unexpected server error/);
+      assert.match(error.message, /err_abc123/);
       return true;
     },
+  );
+
+  assert.throws(
+    () =>
+      unwrapOpenCodeResult(
+        { error: { message: "Bad request" }, response: { status: 400 } },
+        "Fallback message.",
+      ),
+    (error) => error.message === "Bad request",
   );
 });
 
@@ -713,6 +729,101 @@ test("creates, resizes, and closes project terminals", async (t) => {
       rows: 30,
     }),
     /terminal size/,
+  );
+});
+
+test("reverts a message and restores reverted messages", async (t) => {
+  t.after(resetProjectDirectoryScope);
+
+  const calls = [];
+  const session = {
+    id: "ses_abc123",
+    directory: PROJECT_DIRECTORY,
+    revert: { messageID: "msg_target123" },
+  };
+  const api = createOpenCodeApi({
+    session: {
+      revert: async (parameters) => {
+        calls.push(["revert", parameters]);
+        return fulfilled(session);
+      },
+      unrevert: async (parameters) => {
+        calls.push(["unrevert", parameters]);
+        return fulfilled({ ...session, revert: undefined });
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await api.revertSessionMessage(
+      PROJECT_DIRECTORY,
+      "ses_abc123",
+      "msg_target123",
+    ),
+    session,
+  );
+  assert.equal(
+    (
+      await api.restoreRevertedSession(
+        PROJECT_DIRECTORY,
+        "ses_abc123",
+      )
+    ).revert,
+    undefined,
+  );
+
+  assert.deepEqual(calls, [
+    [
+      "revert",
+      {
+        sessionID: "ses_abc123",
+        directory: PROJECT_DIRECTORY,
+        messageID: "msg_target123",
+      },
+    ],
+    [
+      "unrevert",
+      {
+        sessionID: "ses_abc123",
+        directory: PROJECT_DIRECTORY,
+      },
+    ],
+  ]);
+
+  await assert.rejects(
+    api.revertSessionMessage(
+      PROJECT_DIRECTORY,
+      "ses_abc123",
+      "not-a-message",
+    ),
+    /message identifier/,
+  );
+});
+
+test("reports a terminal that starts outside the project folder", async (t) => {
+  t.after(resetProjectDirectoryScope);
+
+  const api = createOpenCodeApi({
+    pty: {
+      create: async () =>
+        fulfilled({
+          id: "pty_abc123XYZ",
+          title: "Shell",
+          command: "/bin/sh",
+          args: ["-l"],
+          cwd: "/root",
+          status: "running",
+          pid: 4321,
+        }),
+    },
+  });
+
+  await assert.rejects(
+    api.createProjectTerminal(PROJECT_DIRECTORY),
+    (error) =>
+      error.kind === "invalid" &&
+      error.message.includes("started in /root") &&
+      error.message.includes(PROJECT_DIRECTORY),
   );
 });
 

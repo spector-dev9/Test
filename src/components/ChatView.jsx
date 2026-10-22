@@ -126,6 +126,11 @@ export function ChatView({
   actionError,
   onClearActionError,
   lastSubmission,
+  reverting,
+  revertError,
+  revertBoundary,
+  onRevertMessage,
+  onRestoreReverted,
   permissions,
   permissionError,
   replyingPermissionId,
@@ -161,6 +166,7 @@ export function ChatView({
   const fileInputRef = useRef(null);
   const previousSessionRef = useRef(session?.id ?? null);
   const [showLatest, setShowLatest] = useState(false);
+  const [editingMessage, setEditingMessage] = useState(null);
   const [attachments, setAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [todosOpen, setTodosOpen] = useState(false);
@@ -199,6 +205,7 @@ export function ChatView({
     connected &&
     Boolean(session) &&
     phase === "idle" &&
+    !reverting &&
     !permissionPending &&
     !questionPending &&
     (draft.trim().length > 0 || attachments.length > 0);
@@ -225,6 +232,7 @@ export function ChatView({
 
     if (changed) {
       onDraftChange("");
+      setEditingMessage(null);
       setAttachments([]);
       setAttachmentError("");
       setTodosOpen(false);
@@ -301,6 +309,15 @@ export function ChatView({
       return;
     }
 
+    if (
+      editingMessage &&
+      !window.confirm(
+        "Send this edit? The original message and every later message will be reverted, and file changes made after this message will be undone.",
+      )
+    ) {
+      return;
+    }
+
     submittingRef.current = true;
     try {
       const payload =
@@ -321,15 +338,60 @@ export function ChatView({
                 url,
               })),
             };
-      const accepted = await onSend(payload);
+      const accepted = await onSend(
+        payload,
+        editingMessage ? { editMessageId: editingMessage.id } : undefined,
+      );
       if (accepted) {
         onDraftChange("");
+        setEditingMessage(null);
         setAttachments([]);
         setAttachmentError("");
         scrollToLatest("smooth");
       }
     } finally {
       submittingRef.current = false;
+    }
+  }
+
+  function beginEdit(message) {
+    if (busy || reverting || !connected) return;
+
+    setEditingMessage({
+      id: message.id,
+      previousDraft: draft,
+    });
+    onDraftChange(message.text);
+    setAttachmentError("");
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function cancelEdit() {
+    if (!editingMessage) return;
+    onDraftChange(editingMessage.previousDraft ?? "");
+    setEditingMessage(null);
+    setAttachmentError("");
+  }
+
+  async function revertMessage(message) {
+    if (busy || reverting || !connected) return;
+
+    const detail =
+      message.role === "assistant"
+        ? "Revert this response? It will remove this turn and undo the file changes made by it."
+        : "Revert from this message? It will remove this message and everything after it, and undo their file changes.";
+
+    if (
+      !window.confirm(
+        `${detail} You can undo the message revert afterward, but file contents are restored immediately.`,
+      )
+    ) {
+      return;
+    }
+
+    const accepted = await onRevertMessage(message.id);
+    if (accepted) {
+      setEditingMessage(null);
     }
   }
 
@@ -587,6 +649,10 @@ export function ChatView({
                 messages={rows}
                 phase={phase}
                 resetKey={session?.id}
+                onEdit={beginEdit}
+                onRevert={revertMessage}
+                actionsDisabled={busy || !connected}
+                reverting={reverting}
               />
             ) : null}
           </section>
@@ -635,6 +701,43 @@ export function ChatView({
           busyId={answeringQuestionId}
           error={questionError}
         />
+
+        {revertBoundary ? (
+          <div className="action-error revert-banner" role="status">
+            <span>
+              The conversation is reverted. File changes from the reverted
+              turn were restored.
+            </span>
+            <div className="action-error-buttons">
+              <button
+                type="button"
+                className="text-button"
+                onClick={onRestoreReverted}
+                disabled={!connected || phase !== "idle" || reverting}
+              >
+                {reverting ? "Restoring…" : "Undo revert"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {revertError ? (
+          <div className="inline-error" role="alert">
+            <span>{revertError}</span>
+          </div>
+        ) : null}
+
+        {editingMessage ? (
+          <div className="editing-banner" role="status">
+            <span>
+              Editing your message. Sending will revert this message and
+              everything after it.
+            </span>
+            <button type="button" className="text-button" onClick={cancelEdit}>
+              Cancel edit
+            </button>
+          </div>
+        ) : null}
 
         {actionError ? (
           <div className="action-error" role="alert">
@@ -734,7 +837,9 @@ export function ChatView({
             placeholder={
               connected
                 ? session
-                  ? permissionPending
+                  ? editingMessage
+                    ? "Edit your message…"
+                    : permissionPending
                     ? "Respond to the permission request above"
                     : questionPending
                       ? "Answer the question to continue"

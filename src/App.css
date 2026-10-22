@@ -1859,11 +1859,52 @@ h2 {
   background: rgba(104, 214, 164, 0.08);
 }
 
+.copy-button.failed {
+  color: #f3a9b3;
+  border-color: rgba(240, 139, 157, 0.45);
+  background: rgba(240, 139, 157, 0.08);
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .message-copy {
   min-height: 26px;
   padding: 3px 7px;
   font-size: 10px;
-  margin-left: auto;
+  margin-left: 0;
+}
+
+.message-action {
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: #aaa6bc;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.message-action:hover:not(:disabled) {
+  color: #e7e7ee;
+  background: #292930;
+}
+
+.message-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.message-action.danger-text:hover:not(:disabled) {
+  color: #f3a9b3;
+  border-color: rgba(240, 139, 157, 0.4);
+  background: rgba(240, 139, 157, 0.08);
 }
 
 .code-copy {
@@ -2278,6 +2319,27 @@ h2 {
   flex-wrap: wrap;
   gap: 10px;
   flex: 0 0 auto;
+}
+
+.revert-banner {
+  border-color: rgba(139, 114, 248, 0.4);
+  color: #cbc1f4;
+  background: rgba(139, 114, 248, 0.1);
+}
+
+.editing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+  padding: 9px 11px;
+  border: 1px solid rgba(139, 114, 248, 0.38);
+  border-radius: 9px;
+  color: #cfc6f5;
+  background: rgba(139, 114, 248, 0.1);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .modal-backdrop {

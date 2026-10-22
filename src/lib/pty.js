@@ -15,6 +15,34 @@ export function normalizePtyTitle(value) {
   return value.trim().slice(0, MAX_PTY_TITLE_CHARS);
 }
 
+function normalizeCwd(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) return "";
+  return value.length > 1 ? value.replace(/\/+$/, "") : value;
+}
+
+function androidCwdAlias(value) {
+  const match = /^\/data\/(?:data|user\/0)\/([^/]+)(\/.*)?$/.exec(value);
+  if (!match) return null;
+  return `${match[1]}${match[2] ?? ""}`;
+}
+
+/**
+ * Android exposes app data under both `/data/data/<pkg>` and
+ * `/data/user/0/<pkg>`, and `File.getCanonicalPath()` may return either one.
+ * The PTY server reports its canonical cwd, so compare the aliases instead of
+ * rejecting a valid terminal created for the project.
+ */
+export function ptyCwdMatches(actual, expected) {
+  const left = normalizeCwd(actual);
+  const right = normalizeCwd(expected);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const leftAlias = androidCwdAlias(left);
+  const rightAlias = androidCwdAlias(right);
+  return Boolean(leftAlias && rightAlias && leftAlias === rightAlias);
+}
+
 export function normalizePtyInfo(data, directory) {
   if (
     !data ||
@@ -25,7 +53,7 @@ export function normalizePtyInfo(data, directory) {
     !data.command ||
     !Array.isArray(data.args) ||
     data.args.some((argument) => typeof argument !== "string") ||
-    data.cwd !== directory ||
+    !ptyCwdMatches(data.cwd, directory) ||
     !["running", "exited"].includes(data.status) ||
     !Number.isSafeInteger(data.pid) ||
     data.pid <= 0

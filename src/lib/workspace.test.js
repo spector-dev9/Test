@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  conversationBeforeRevert,
+  isMessageIdentifier,
   MAX_TOOL_OUTPUT_CHARS,
   assistantErrorMessage,
   buildSessionTitle,
@@ -123,8 +125,11 @@ test("normalizes OpenCode conversation rows into safe display messages", () => {
           detail: "",
           summary: "",
           input: "",
+          inputFull: "",
           output: "",
+          outputFull: "",
           error: "",
+          errorFull: "",
         },
       ],
       error: "The response was stopped.",
@@ -173,6 +178,7 @@ test("bounds oversized tool output instead of dropping it silently", () => {
 
   assert.ok(tool.output.length < MAX_TOOL_OUTPUT_CHARS + 200);
   assert.match(tool.output, /truncated/);
+  assert.equal(tool.outputFull.length, MAX_TOOL_OUTPUT_CHARS + 500);
 });
 
 test("falls back to a safe tool shape for malformed parts", () => {
@@ -458,4 +464,23 @@ test("builds bounded session titles and offline copy", () => {
   assert.equal(offlineLabel("invalid"), "Error");
   assert.match(offlineHelp("timeout"), /did not answer/);
   assert.match(offlineHelp("unknown"), /local OpenCode server/);
+});
+
+test("filters conversation rows from a revert boundary", () => {
+  const rows = [
+    { info: { id: "msg_one", role: "user" } },
+    { info: { id: "msg_two", role: "assistant" } },
+    { info: { id: "msg_three", role: "user" } },
+  ];
+
+  assert.deepEqual(
+    conversationBeforeRevert(rows, "msg_two").map((row) => row.info.id),
+    ["msg_one"],
+  );
+  assert.equal(conversationBeforeRevert(rows, "msg_missing"), rows);
+  assert.deepEqual(conversationBeforeRevert(null, "msg_two"), []);
+
+  assert.equal(isMessageIdentifier("msg_abc123"), true);
+  assert.equal(isMessageIdentifier("message-1"), false);
+  assert.equal(isMessageIdentifier("msg_bad-id"), false);
 });

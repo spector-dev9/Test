@@ -1,4 +1,8 @@
+import { validateFilePatch } from "./files.js";
+
 const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+const HUNK_HEADER_RE =
+  /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
 export function parseUnifiedPatch(patch) {
   if (typeof patch !== "string" || !patch) return [];
@@ -113,4 +117,78 @@ export function summarizePatchStats(hunks) {
   }
 
   return { additions, deletions };
+}
+
+function hunkLineCount(value) {
+  return value === undefined ? 1 : Number(value);
+}
+
+/**
+ * Build the patch that undoes a single-file unified diff.
+ *
+ * `vcs.apply` only accepts a forward patch, so reverting a changed file means
+ * swapping the old/new sides and every added/removed line. Added files become
+ * deletions and deleted files become additions.
+ */
+export function reverseUnifiedPatch(patch) {
+  if (typeof patch !== "string" || !patch) return "";
+
+  const source = patch.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  const parsed = validateFilePatch(source);
+  if (!parsed) return "";
+
+  const { path, isNew, isDeleted = false } = parsed;
+
+  const lines = source.split("\n");
+  const output = [`diff --git a/${path} b/${path}`];
+
+  if (isNew) output.push("deleted file mode 100644");
+  else if (isDeleted) output.push("new file mode 100644");
+
+  output.push(`--- ${isNew ? `a/${path}` : "/dev/null"}`);
+  output.push(`+++ ${isDeleted ? `b/${path}` : "/dev/null"}`);
+
+  if (!isNew && !isDeleted) {
+    output[output.length - 2] = `--- a/${path}`;
+    output[output.length - 1] = `+++ b/${path}`;
+  }
+
+  let hunks = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = HUNK_HEADER_RE.exec(lines[index]);
+    if (!header) continue;
+
+    const oldStart = Number(header[1]);
+    const oldCount = hunkLineCount(header[2]);
+    const newStart = Number(header[3]);
+    const newCount = hunkLineCount(header[4]);
+    const context = header[5] ?? "";
+
+    hunks += 1;
+    output.push(
+      `@@ -${newStart},${newCount} +${oldStart},${oldCount} @@${context}`,
+    );
+
+    index += 1;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.startsWith("@@") || line.startsWith("diff --git ")) {
+        index -= 1;
+        break;
+      }
+
+      if (line.startsWith("+")) {
+        output.push(`-${line.slice(1)}`);
+      } else if (line.startsWith("-")) {
+        output.push(`+${line.slice(1)}`);
+      } else {
+        output.push(line);
+      }
+
+      index += 1;
+    }
+  }
+
+  return hunks > 0 ? `${output.join("\n")}\n` : "";
 }

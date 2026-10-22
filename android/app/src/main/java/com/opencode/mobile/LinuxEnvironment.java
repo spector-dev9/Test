@@ -251,6 +251,15 @@ public class LinuxEnvironment extends Plugin {
 
                 File rootfs = rootfsPath();
                 File workspace = resolveWorkspace(directory);
+                if (directory != null
+                    && !directory.trim().isEmpty()
+                    && workspace == null) {
+                    call.reject(
+                        "The project folder is not accessible inside the Alpine environment. "
+                            + "Re-select the workspace or grant storage access, then try again."
+                    );
+                    return;
+                }
                 writeResolv(rootfs);
 
                 List<String> argv = guestArgv(rootfs, workspace);

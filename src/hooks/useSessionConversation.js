@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectionFailure } from "../lib/connection";
 import {
   abortSession,
@@ -10,11 +10,15 @@ import {
   rejectQuestion as rejectQuestionRequest,
   replyPermission,
   replyQuestion,
+  restoreRevertedSession,
+  revertSessionMessage,
   sendCommand,
   sendPromptAsync,
 } from "../lib/opencode";
 import {
+  conversationBeforeRevert,
   isConversationSettled,
+  isMessageIdentifier,
   normalizeConversation,
 } from "../lib/workspace";
 
@@ -97,6 +101,12 @@ function messageSignature(rows) {
             tool?.status ?? "",
             tool?.title ?? "",
             tool?.detail ?? "",
+            textSignature(
+              typeof tool?.output === "string" ? tool.output : "",
+            ),
+            textSignature(
+              typeof tool?.error === "string" ? tool.error : "",
+            ),
           ].join(":"),
         ),
       ].join("|");
@@ -220,10 +230,15 @@ export function useSessionConversation({
   sessionId,
   enabled,
   onRefreshSessions,
+  onFilesChanged,
+  sessionRevertMessageID = null,
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [phase, setPhase] = useState("idle");
   const [actionError, setActionError] = useState(null);
+  const [revertBoundary, setRevertBoundary] = useState(null);
+  const [reverting, setReverting] = useState(false);
+  const [revertError, setRevertError] = useState("");
   const [lastSubmission, setLastSubmission] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const [permissionError, setPermissionError] = useState(null);
@@ -240,11 +255,17 @@ export function useSessionConversation({
   const sessionIDRef = useRef(null);
   const directoryRef = useRef(null);
   const submittedAtRef = useRef(0);
+  const sessionRevertKeyRef = useRef("");
   const refreshSessionsRef = useRef(onRefreshSessions);
+  const onFilesChangedRef = useRef(onFilesChanged);
 
   useEffect(() => {
     refreshSessionsRef.current = onRefreshSessions;
   }, [onRefreshSessions]);
+
+  useEffect(() => {
+    onFilesChangedRef.current = onFilesChanged;
+  }, [onFilesChanged]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -275,6 +296,13 @@ export function useSessionConversation({
       setPhaseSafe("idle");
       setActionError(null);
       setLastSubmission(null);
+
+      if (connectionChanged) {
+        sessionRevertKeyRef.current = "";
+        setRevertBoundary(null);
+      }
+      setReverting(false);
+      setRevertError("");
       setPermissionError(null);
       setReplyingPermissionId(null);
       setQuestionError(null);
@@ -365,6 +393,21 @@ export function useSessionConversation({
 
     return () => controller.abort();
   }, [directory, enabled, sessionId, setPhaseSafe]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !isMessageIdentifier(sessionRevertMessageID)
+    ) {
+      return;
+    }
+
+    const key = `${directory}:${sessionId}:${sessionRevertMessageID}`;
+    if (sessionRevertKeyRef.current === key) return;
+
+    sessionRevertKeyRef.current = key;
+    setRevertBoundary(sessionRevertMessageID);
+  }, [directory, sessionId, sessionRevertMessageID]);
 
   useEffect(() => {
     if (phase !== "working" || !sessionId || !directory || !enabled) {
@@ -552,24 +595,38 @@ export function useSessionConversation({
   }, [directory, enabled, sessionId, setPhaseSafe]);
 
   const submit = useCallback(
-    async (request) => {
+    async (request, { editMessageId = null } = {}) => {
       if (
         !directory ||
         !sessionId ||
         !enabled ||
         phaseRef.current !== "idle" ||
-        !request
+        !request ||
+        reverting
       ) {
         return false;
       }
 
-      const stored = { request };
+      const stored = { request, editMessageId };
       setLastSubmission(stored);
       setActionError(null);
+      setRevertError("");
       submittedAtRef.current = Date.now();
       setPhaseSafe("sending");
 
+      let reverted = false;
+
       try {
+        if (editMessageId) {
+          const session = await revertSessionMessage(
+            directory,
+            sessionId,
+            editMessageId,
+          );
+          reverted = true;
+          setRevertBoundary(session.revert?.messageID ?? editMessageId);
+        }
+
         if (request.kind === "command") {
           await sendCommand(directory, sessionId, {
             command: request.command,
@@ -586,6 +643,8 @@ export function useSessionConversation({
           });
         }
 
+        setRevertBoundary(null);
+        setRevertError("");
         setPhaseSafe("working");
         refreshSessionsRef.current?.();
         return true;
@@ -597,18 +656,122 @@ export function useSessionConversation({
             : "The prompt could not be sent.",
         );
         submittedAtRef.current = 0;
-        setActionError({ ...failure, retryable: true });
+
+        if (reverted) {
+          setActionError({
+            ...failure,
+            message:
+              `The message was reverted, but the replacement could not be sent. ${failure.message}`,
+            retryable: false,
+          });
+          setRevertError(
+            "The original message and later changes are still reverted.",
+          );
+        } else {
+          setActionError({ ...failure, retryable: true });
+        }
+
         setPhaseSafe("idle");
         return false;
       }
     },
-    [directory, enabled, sessionId, setPhaseSafe],
+    [directory, enabled, reverting, sessionId, setPhaseSafe],
   );
 
   const retryLast = useCallback(() => {
-    if (phaseRef.current !== "idle" || !lastSubmission) return false;
-    return submit(lastSubmission.request);
-  }, [lastSubmission, submit]);
+    if (phaseRef.current !== "idle" || !lastSubmission || reverting) {
+      return false;
+    }
+    return submit(lastSubmission.request, {
+      editMessageId: lastSubmission.editMessageId,
+    });
+  }, [lastSubmission, reverting, submit]);
+
+  const revertMessage = useCallback(
+    async (messageID) => {
+      if (
+        !directory ||
+        !sessionId ||
+        !enabled ||
+        phaseRef.current !== "idle" ||
+        reverting
+      ) {
+        return false;
+      }
+
+      const targetSessionID = sessionId;
+      const targetDirectory = directory;
+      setRevertError("");
+      setReverting(true);
+
+      try {
+        const session = await revertSessionMessage(
+          targetDirectory,
+          targetSessionID,
+          messageID,
+        );
+        if (
+          sessionIDRef.current !== targetSessionID ||
+          directoryRef.current !== targetDirectory
+        ) {
+          return true;
+        }
+        setRevertBoundary(session.revert?.messageID ?? messageID);
+        setActionError(null);
+        refreshSessionsRef.current?.();
+        onFilesChangedRef.current?.();
+        return true;
+      } catch (error) {
+        const failure = connectionFailure(
+          error,
+          "The messages could not be reverted.",
+        );
+        setRevertError(failure.message);
+        return false;
+      } finally {
+        setReverting(false);
+      }
+    },
+    [directory, enabled, reverting, sessionId],
+  );
+
+  const restoreReverted = useCallback(async () => {
+    if (
+      !directory ||
+      !sessionId ||
+      !enabled ||
+      phaseRef.current !== "idle" ||
+      reverting
+    ) {
+      return false;
+    }
+
+    setRevertError("");
+    setReverting(true);
+
+    try {
+      await restoreRevertedSession(directory, sessionId);
+      setRevertBoundary(null);
+      setActionError(null);
+      refreshSessionsRef.current?.();
+      onFilesChangedRef.current?.();
+
+      const result = await loadSnapshot(directory, sessionId);
+      if (result.messages.status === "fulfilled") {
+        applyMessageRows(setMessages, result.messages.value);
+      }
+      return true;
+    } catch (error) {
+      const failure = connectionFailure(
+        error,
+        "The reverted messages could not be restored.",
+      );
+      setRevertError(failure.message);
+      return false;
+    } finally {
+      setReverting(false);
+    }
+  }, [directory, enabled, reverting, sessionId]);
 
   const stop = useCallback(async () => {
     if (
@@ -833,10 +996,26 @@ export function useSessionConversation({
     setActionError(null);
   }, []);
 
+  const visibleMessages = useMemo(
+    () =>
+      revertBoundary
+        ? {
+            ...messages,
+            data: conversationBeforeRevert(messages.data, revertBoundary),
+          }
+        : messages,
+    [messages, revertBoundary],
+  );
+
   return {
-    messages,
+    messages: visibleMessages,
     phase,
     actionError,
+    reverting,
+    revertError,
+    revertBoundary,
+    revertMessage,
+    restoreReverted,
     lastSubmission,
     permissions,
     permissionError,

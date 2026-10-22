@@ -56,8 +56,8 @@ export function ToolCard({ tool }) {
               <div className="tool-card-block-head">
                 <span>Input</span>
                 <CopyButton
-                  text={tool.input}
-                  title="Copy tool input"
+                  text={tool.inputFull || tool.input}
+                  title="Copy full tool input"
                   className="code-copy"
                 />
               </div>
@@ -70,8 +70,8 @@ export function ToolCard({ tool }) {
               <div className="tool-card-block-head">
                 <span>Output</span>
                 <CopyButton
-                  text={tool.output}
-                  title="Copy tool output"
+                  text={tool.outputFull || tool.output}
+                  title="Copy full tool output"
                   className="code-copy"
                 />
               </div>
@@ -85,6 +85,11 @@ export function ToolCard({ tool }) {
             <div className="tool-card-block">
               <div className="tool-card-block-head">
                 <span>Error</span>
+                <CopyButton
+                  text={tool.errorFull || tool.error}
+                  title="Copy full tool error"
+                  className="code-copy"
+                />
               </div>
               <pre className="tool-card-code tool-card-error">{tool.error}</pre>
             </div>

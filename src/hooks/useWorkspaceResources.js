@@ -307,17 +307,15 @@ export function useProjectChanges({ directory, connected, active }) {  const [ch
           statusResult.reason,
           "Changes could not be loaded.",
         );
-        setChangeState((previous) => ({
+        setChangeState({
           directory,
           status: "error",
-          files:
-            previous.directory === directory ? previous.files : [],
-          diffs:
-            previous.directory === directory ? previous.diffs : [],
+          files: [],
+          diffs: [],
           error: failure.message,
           errorKind: failure.kind,
           patchError: null,
-        }));
+        });
       }
     }
 
@@ -363,9 +361,19 @@ export function useProjectChanges({ directory, connected, active }) {  const [ch
       return { ...scoped, status: "loading" };
     }
 
-    return !connected && scoped.files.length === 0
-      ? { ...scoped, status: "offline" }
-      : scoped;
+    if (!connected) {
+      return {
+        directory,
+        status: "offline",
+        files: [],
+        diffs: [],
+        error: null,
+        errorKind: null,
+        patchError: null,
+      };
+    }
+
+    return scoped;
   }, [active, changeState, connected, directory]);
 
   return { changes, refresh };

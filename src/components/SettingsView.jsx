@@ -105,6 +105,7 @@ export function SettingsView({
   const [linuxCommand, setLinuxCommand] = useState("");
   const [rootfsPath, setRootfsPath] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
+  const [diagnosticsCopyError, setDiagnosticsCopyError] = useState("");
 
   useEffect(() => {
     if (!storageSupported) return undefined;
@@ -354,9 +355,17 @@ export function SettingsView({
       `time: ${new Date().toISOString()}`,
     ];
 
-    await copyText(lines.join("\n"));
-    setDiagnosticsCopied(true);
-    setTimeout(() => setDiagnosticsCopied(false), 1500);
+    try {
+      await copyText(lines.join("\n"));
+      setDiagnosticsCopyError("");
+      setDiagnosticsCopied(true);
+      setTimeout(() => setDiagnosticsCopied(false), 1500);
+    } catch {
+      setDiagnosticsCopied(false);
+      setDiagnosticsCopyError(
+        "The diagnostics report could not be copied to the clipboard.",
+      );
+    }
   }
 
   return (
@@ -795,6 +804,11 @@ export function SettingsView({
               {diagnosticsCopied ? "Copied" : "Copy report"}
             </button>
           </div>
+          {diagnosticsCopyError ? (
+            <p className="inline-error" role="alert">
+              {diagnosticsCopyError}
+            </p>
+          ) : null}
           <ul className="settings-list">
             <li>Health, project discovery, and scoped session lists</li>
             <li>Session messages, prompts, commands, and abort requests</li>

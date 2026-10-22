@@ -5,7 +5,10 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { MarkdownText } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 import { highlightCode } from "../lib/highlight";
-import { formatSessionTime } from "../lib/workspace";
+import {
+  formatSessionTime,
+  isMessageIdentifier,
+} from "../lib/workspace";
 
 function openLink(url) {
   Browser.open({ url }).catch(() => {});
@@ -55,7 +58,15 @@ function MessageText({ text }) {
 const INITIAL_MESSAGE_WINDOW = 30;
 const MESSAGE_WINDOW_PAGE = 30;
 
-export function MessageList({ messages, phase, resetKey }) {
+export function MessageList({
+  messages,
+  phase,
+  resetKey,
+  onEdit,
+  onRevert,
+  actionsDisabled = false,
+  reverting = false,
+}) {
   const [windowState, setWindowState] = useState({
     key: resetKey,
     count: INITIAL_MESSAGE_WINDOW,
@@ -112,12 +123,50 @@ export function MessageList({ messages, phase, resetKey }) {
             {message.role === "assistant" && !message.completed ? (
               <span className="message-live">working</span>
             ) : null}
-            {message.role === "assistant" && message.text ? (
-              <CopyButton
-                text={message.text}
-                title={message.completed ? "Copy message" : "Copy current message text"}
-                className="message-copy"
-              />
+            {message.text ||
+            message.tools.length > 0 ||
+            isMessageIdentifier(message.id) ? (
+              <div className="message-actions">
+                {message.text ? (
+                  <CopyButton
+                    text={message.text}
+                    title={
+                      message.completed
+                        ? "Copy message text"
+                        : "Copy current message text"
+                    }
+                    className="message-copy"
+                  />
+                ) : null}
+                {message.role === "user" &&
+                message.text &&
+                isMessageIdentifier(message.id) ? (
+                  <button
+                    type="button"
+                    className="message-action"
+                    onClick={() => onEdit?.(message)}
+                    disabled={actionsDisabled || reverting}
+                    title="Edit this message"
+                  >
+                    Edit
+                  </button>
+                ) : null}
+                {isMessageIdentifier(message.id) ? (
+                  <button
+                    type="button"
+                    className="message-action danger-text"
+                    onClick={() => onRevert?.(message)}
+                    disabled={actionsDisabled || reverting}
+                    title={
+                      message.role === "assistant"
+                        ? "Revert this response and undo its file changes"
+                        : "Revert this message and everything after it"
+                    }
+                  >
+                    {reverting ? "Reverting…" : "Revert"}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
 

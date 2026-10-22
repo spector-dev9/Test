@@ -28,6 +28,7 @@ import {
   isPtyId,
   normalizePtyInfo,
   normalizePtyTitle,
+  ptyCwdMatches,
   validateTerminalSize,
 } from "./pty.js";
 import {
@@ -38,6 +39,7 @@ import {
 export { PROJECT_DIRECTORY };
 
 const SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]+$/;
+const MESSAGE_ID_PATTERN = /^msg_[A-Za-z0-9]+$/;
 const QUESTION_ID_PATTERN = /^que_[A-Za-z0-9]+$/;
 const PERMISSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
@@ -150,10 +152,39 @@ function invalidInput(message) {
   );
 }
 
-function httpFailure(status) {
+const MAX_SERVER_ERROR_CHARS = 500;
+
+function serverErrorMessage(error) {
+  const detail =
+    typeof error?.data?.message === "string"
+      ? error.data.message
+      : typeof error?.message === "string"
+        ? error.message
+        : "";
+  const message = detail
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_SERVER_ERROR_CHARS);
+
+  if (!message) return "";
+
+  const reference =
+    typeof error?.data?.ref === "string" &&
+    /^err_[A-Za-z0-9]+$/.test(error.data.ref)
+      ? error.data.ref
+      : "";
+
+  return reference && !message.includes(reference)
+    ? `${message} (${reference})`
+    : message;
+}
+
+function httpFailure(status, error) {
   return new OpenCodeConnectionError(
     CONNECTION_ERROR_KINDS.HTTP,
-    `The OpenCode server returned HTTP ${status}.`,
+    serverErrorMessage(error) ||
+      `The OpenCode server returned HTTP ${status}.`,
     { status },
   );
 }
@@ -192,6 +223,17 @@ async function executeRequest(task, signal) {
     signal,
     timeoutMs: BROWSER_REQUEST_TIMEOUT_MS,
   });
+}
+
+function validateMessageId(messageID) {
+  if (
+    typeof messageID !== "string" ||
+    !MESSAGE_ID_PATTERN.test(messageID)
+  ) {
+    throw invalidInput("The message identifier is invalid.");
+  }
+
+  return messageID;
 }
 
 function validateSessionId(sessionID) {
@@ -590,7 +632,7 @@ export function unwrapOpenCodeResult(result, fallback) {
     }
 
     if (isHttpStatus(status)) {
-      throw httpFailure(status);
+      throw httpFailure(status, result.error);
     }
 
     throw new OpenCodeConnectionError(
@@ -813,6 +855,72 @@ export function createOpenCodeApi(client = opencode) {
         "The session could not be deleted.",
         signal,
       );
+    },
+
+    async revertSessionMessage(
+      directory,
+      sessionID,
+      messageID,
+      signal,
+    ) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+      const message = validateMessageId(messageID);
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.revert(
+            {
+              sessionID: id,
+              directory: scope,
+              messageID: message,
+            },
+            { signal: requestSignal },
+          ),
+        "The message could not be reverted.",
+        signal,
+      );
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.id !== id ||
+        data.directory !== scope ||
+        !data.revert ||
+        !MESSAGE_ID_PATTERN.test(data.revert.messageID ?? "")
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return data;
+    },
+
+    async restoreRevertedSession(directory, sessionID, signal) {
+      const scope = validateProjectDirectory(directory);
+      const id = validateSessionId(sessionID);
+
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.session.unrevert(
+            { sessionID: id, directory: scope },
+            { signal: requestSignal },
+          ),
+        "The reverted messages could not be restored.",
+        signal,
+      );
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.id !== id ||
+        data.directory !== scope
+      ) {
+        throw unexpectedResponse();
+      }
+
+      return data;
     },
 
     async listPermissions(directory, signal) {
@@ -1173,9 +1281,26 @@ export function createOpenCodeApi(client = opencode) {
         "The terminal could not be started.",
         signal,
       );
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof data.cwd === "string" &&
+        !ptyCwdMatches(data.cwd, scope)
+      ) {
+        throw new OpenCodeConnectionError(
+          CONNECTION_ERROR_KINDS.INVALID,
+          `The terminal started in ${data.cwd}, not the project folder ${scope}.`,
+        );
+      }
+
       const terminal = normalizePtyInfo(data, scope);
 
-      if (!terminal) throw unexpectedResponse();
+      if (!terminal) {
+        throw new OpenCodeConnectionError(
+          CONNECTION_ERROR_KINDS.INVALID,
+          "The terminal server returned an unexpected terminal response.",
+        );
+      }
 
       return terminal;
     },
@@ -1582,6 +1707,22 @@ export const updateSession = (directory, sessionID, options, signal) =>
 
 export const deleteSession = (directory, sessionID, signal) =>
   opencodeApi.deleteSession(directory, sessionID, signal);
+
+export const revertSessionMessage = (
+  directory,
+  sessionID,
+  messageID,
+  signal,
+) =>
+  opencodeApi.revertSessionMessage(
+    directory,
+    sessionID,
+    messageID,
+    signal,
+  );
+
+export const restoreRevertedSession = (directory, sessionID, signal) =>
+  opencodeApi.restoreRevertedSession(directory, sessionID, signal);
 
 export const listPermissions = (directory, signal) =>
   opencodeApi.listPermissions(directory, signal);

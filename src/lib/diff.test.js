@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseUnifiedPatch, summarizePatchStats } from "./diff.js";
+import {
+  parseUnifiedPatch,
+  reverseUnifiedPatch,
+  summarizePatchStats,
+} from "./diff.js";
 
 const TWO_HUNKS = [
   "diff --git a/f.txt b/f.txt",
@@ -123,4 +127,107 @@ test("captures hunk trailing context", () => {
   const patch = "@@ -1,1 +1,1 @@ function main()";
   const [hunk] = parseUnifiedPatch(patch);
   assert.equal(hunk.context, "function main()");
+});
+
+test("reverses modified, added, and deleted file patches", () => {
+  const modified = [
+    "diff --git a/f.txt b/f.txt",
+    "index 1111111..2222222 100644",
+    "--- a/f.txt",
+    "+++ b/f.txt",
+    "@@ -1,3 +1,3 @@",
+    " one",
+    "-two",
+    "+TWO",
+    " three",
+    "",
+  ].join("\n");
+
+  const reversed = reverseUnifiedPatch(modified);
+  assert.match(reversed, /^--- a\/f\.txt$/m);
+  assert.match(reversed, /^\+\+\+ b\/f\.txt$/m);
+  assert.match(reversed, /^@@ -1,3 \+1,3 @@$/m);
+  assert.match(reversed, /^\+two$/m);
+  assert.match(reversed, /^-TWO$/m);
+
+  const added = [
+    "diff --git a/new.txt b/new.txt",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/new.txt",
+    "@@ -0,0 +1,2 @@",
+    "+one",
+    "+two",
+    "",
+  ].join("\n");
+
+  const removed = reverseUnifiedPatch(added);
+  assert.match(removed, /^deleted file mode 100644$/m);
+  assert.match(removed, /^--- a\/new\.txt$/m);
+  assert.match(removed, /^\+\+\+ \/dev\/null$/m);
+  assert.match(removed, /^@@ -1,2 \+0,0 @@$/m);
+  assert.match(removed, /^-one$/m);
+
+  const deleted = [
+    "diff --git a/gone.txt b/gone.txt",
+    "deleted file mode 100644",
+    "--- a/gone.txt",
+    "+++ /dev/null",
+    "@@ -1,1 +0,0 @@",
+    "-gone",
+    "",
+  ].join("\n");
+
+  const restored = reverseUnifiedPatch(deleted);
+  assert.match(restored, /^new file mode 100644$/m);
+  assert.match(restored, /^--- \/dev\/null$/m);
+  assert.match(restored, /^\+\+\+ b\/gone\.txt$/m);
+  assert.match(restored, /^@@ -0,0 \+1,1 @@$/m);
+  assert.match(restored, /^\+gone$/m);
+
+  assert.equal(reverseUnifiedPatch("not a patch"), "");
+  assert.equal(reverseUnifiedPatch(null), "");
+});
+
+test("refuses to reverse ambiguous multi-file patches", () => {
+  const first = [
+    "diff --git a/a.txt b/a.txt",
+    "--- a/a.txt",
+    "+++ b/a.txt",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+  const second = [
+    "diff --git a/b.txt b/b.txt",
+    "--- a/b.txt",
+    "+++ b/b.txt",
+    "@@ -1,1 +1,1 @@",
+    "-one",
+    "+two",
+    "",
+  ].join("\n");
+
+  assert.equal(reverseUnifiedPatch(`${first}${second}`), "");
+});
+
+test("reverses patches for paths with spaces", () => {
+  const patch = [
+    "diff --git a/docs/release notes.md b/docs/release notes.md",
+    "--- a/docs/release notes.md",
+    "+++ b/docs/release notes.md",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+
+  const reversed = reverseUnifiedPatch(patch);
+  assert.match(
+    reversed,
+    /^diff --git a\/docs\/release notes\.md b\/docs\/release notes\.md$/m,
+  );
+  assert.match(reversed, /^-new$/m);
+  assert.match(reversed, /^\+old$/m);
 });

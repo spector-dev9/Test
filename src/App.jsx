@@ -24,7 +24,12 @@ import {
   useModelsAndCommands,
   useProjectChanges,
 } from "./hooks/useWorkspaceResources";
-import { OPENCODE_BASE_URL } from "./lib/opencode";
+import {
+  OPENCODE_BASE_URL,
+  applyProjectPatch,
+} from "./lib/opencode";
+import { reverseUnifiedPatch } from "./lib/diff";
+import { validateFilePatch } from "./lib/files";
 import {
   FALLBACK_PROJECT,
   PROJECT_DIRECTORY,
@@ -336,6 +341,10 @@ export default function App() {
     sessionId: selectedSessionId,
     enabled: connected,
     onRefreshSessions: overview.refresh,
+    onFilesChanged: refreshChanges,
+    sessionRevertMessageID:
+      sessions.data.find((session) => session.id === selectedSessionId)?.revert
+        ?.messageID ?? null,
   });
   const refreshConversation = conversation.refresh;
 
@@ -820,6 +829,22 @@ export default function App() {
     [handleNavigate],
   );
 
+  const handleRevertFile = useCallback(
+    async (path, patch) => {
+      const reverse = reverseUnifiedPatch(patch);
+      const reversed = validateFilePatch(reverse);
+      if (!reverse || !reversed || reversed.path !== path) {
+        throw new Error(
+          `The diff for ${path} cannot be reversed safely from this app.`,
+        );
+      }
+
+      await applyProjectPatch(activeDirectory, reverse);
+      refreshChanges();
+    },
+    [activeDirectory, refreshChanges],
+  );
+
   const handleSelectVariant = useCallback((model, variant) => {
     const next = {
       providerID: model.providerID,
@@ -929,6 +954,11 @@ export default function App() {
                 actionError={conversation.actionError}
                 onClearActionError={conversation.clearActionError}
                 lastSubmission={conversation.lastSubmission}
+                reverting={conversation.reverting}
+                revertError={conversation.revertError}
+                revertBoundary={conversation.revertBoundary}
+                onRevertMessage={conversation.revertMessage}
+                onRestoreReverted={conversation.restoreReverted}
                 permissions={conversation.permissions}
                 permissionError={conversation.permissionError}
                 replyingPermissionId={conversation.replyingPermissionId}
@@ -1095,6 +1125,7 @@ export default function App() {
                 connected={connected}
                 project={activeProject}
                 onOpenFile={handleOpenFileFromChanges}
+                onRevertFile={handleRevertFile}
               />
               </ErrorBoundary>
             ) : null}

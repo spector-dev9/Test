@@ -4,7 +4,7 @@ export const MAX_PATCH_CHARS = 2_500_000;
 export const MAX_FILE_SEARCH_RESULTS = 100;
 export const MAX_FILE_TABS = 6;
 
-const UNSAFE_PATCH_PATH = /[\s"\\]/;
+const UNSAFE_PATCH_PATH = /["\\]/;
 
 function hasControlCharacters(value, allowed = []) {
   for (const character of value) {
@@ -46,6 +46,7 @@ export function normalizeProjectPath(value, { allowRoot = false } = {}) {
 export function normalizePatchPath(value) {
   if (
     typeof value !== "string" ||
+    value !== value.trim() ||
     UNSAFE_PATCH_PATH.test(value)
   ) {
     return null;
@@ -140,6 +141,33 @@ export function buildFilePatch({
   return patch;
 }
 
+function patchHeaderValue(value) {
+  if (typeof value !== "string") return "";
+  const normalized = value.replace(/\r$/, "");
+  return normalized.endsWith("\t") ? normalized.slice(0, -1) : normalized;
+}
+
+export function patchFilePath(patch) {
+  if (typeof patch !== "string" || !patch) return null;
+
+  const headers = [...patch.matchAll(/^diff --git (.+)$/gm)];
+  if (headers.length !== 1) return null;
+
+  const diffLine = patchHeaderValue(headers[0][1]);
+  const oldHeader = patchHeaderValue(/^--- (.*)$/m.exec(patch)?.[1]);
+  const newHeader = patchHeaderValue(/^\+\+\+ (.*)$/m.exec(patch)?.[1]);
+  const candidate =
+    newHeader && newHeader !== "/dev/null" && newHeader.startsWith("b/")
+      ? newHeader.slice(2)
+      : oldHeader && oldHeader !== "/dev/null" && oldHeader.startsWith("a/")
+        ? oldHeader.slice(2)
+        : "";
+  const path = normalizePatchPath(candidate);
+
+  if (!path || diffLine !== `a/${path} b/${path}`) return null;
+  return path;
+}
+
 export function validateFilePatch(patch) {
   if (
     typeof patch !== "string" ||
@@ -150,21 +178,12 @@ export function validateFilePatch(patch) {
     return null;
   }
 
-  const diffHeaders = [
-    ...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm),
-  ];
-
-  if (diffHeaders.length !== 1) return null;
-
-  const [, oldPath, newPath] = diffHeaders[0];
-  if (oldPath !== newPath) return null;
-
-  const path = normalizePatchPath(newPath);
+  const path = patchFilePath(patch);
   if (!path) return null;
 
   if (
     /^(?:rename|copy) (?:from|to) /m.test(patch) ||
-    /^(?:deleted file mode|old mode|new mode) /m.test(patch) ||
+    /^(?:old mode|new mode) /m.test(patch) ||
     /^GIT binary patch$/m.test(patch) ||
     /^Binary files /m.test(patch)
   ) {
@@ -172,19 +191,24 @@ export function validateFilePatch(patch) {
   }
 
   const fileModes = [...patch.matchAll(/^new file mode (.+)$/gm)];
+  const deletedModes = [...patch.matchAll(/^deleted file mode (.+)$/gm)];
   if (
     fileModes.length > 1 ||
-    (fileModes.length === 1 && fileModes[0][1] !== "100644")
+    deletedModes.length > 1 ||
+    (fileModes.length === 1 && deletedModes.length === 1) ||
+    (fileModes.length === 1 && fileModes[0][1] !== "100644") ||
+    (deletedModes.length === 1 && deletedModes[0][1] !== "100644")
   ) {
     return null;
   }
 
   const isNew = fileModes.length === 1;
-  const oldHeader = /^--- (.+)$/m.exec(patch)?.[1];
-  const newHeader = /^\+\+\+ (.+)$/m.exec(patch)?.[1];
+  const isDeleted = deletedModes.length === 1;
+  const oldHeader = patchHeaderValue(/^--- (.*)$/m.exec(patch)?.[1]);
+  const newHeader = patchHeaderValue(/^\+\+\+ (.*)$/m.exec(patch)?.[1]);
 
   if (
-    newHeader !== `b/${path}` ||
+    newHeader !== (isDeleted ? "/dev/null" : `b/${path}`) ||
     oldHeader !== (isNew ? "/dev/null" : `a/${path}`)
   ) {
     return null;
@@ -194,7 +218,11 @@ export function validateFilePatch(patch) {
     return null;
   }
 
-  return { path, isNew };
+  return {
+    path,
+    isNew,
+    ...(isDeleted ? { isDeleted: true } : {}),
+  };
 }
 
 export function detectLineEnding(content) {
