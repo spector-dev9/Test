@@ -71,6 +71,106 @@ public class GitHubPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void revertFile(PluginCall call) {
+        String directory = call.getString("directory");
+        String rawPath = call.getString("path");
+        File repository = resolveDirectory(directory);
+        String path = normalizeRepositoryPath(rawPath);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        if (path == null) {
+            call.reject("The file path is invalid.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult inside = runGit(repository, Arrays.asList(
+                    "--literal-pathspecs",
+                    "rev-parse",
+                    "--is-inside-work-tree"
+                ));
+
+                if (inside.exitCode != 0 || !"true".equals(inside.output.trim())) {
+                    reject(call, "This folder is not a Git repository.", null);
+                    return;
+                }
+
+                File target = resolveRepositoryPath(repository, path);
+
+                if (target == null) {
+                    reject(call, "The file path is outside the repository.", null);
+                    return;
+                }
+
+                ProcessResult head = runGit(repository, Arrays.asList(
+                    "--literal-pathspecs",
+                    "cat-file",
+                    "-e",
+                    "HEAD:" + path
+                ));
+
+                boolean restored = head.exitCode == 0;
+
+                if (restored) {
+                    ProcessResult checkout = runGit(repository, Arrays.asList(
+                        "--literal-pathspecs",
+                        "checkout",
+                        "HEAD",
+                        "--",
+                        path
+                    ));
+
+                    if (checkout.exitCode != 0) {
+                        reject(call, checkout.output, null);
+                        return;
+                    }
+                } else {
+                    ProcessResult tracked = runGit(repository, Arrays.asList(
+                        "--literal-pathspecs",
+                        "ls-files",
+                        "--error-unmatch",
+                        "--",
+                        path
+                    ));
+
+                    if (tracked.exitCode == 0) {
+                        ProcessResult remove = runGit(repository, Arrays.asList(
+                            "--literal-pathspecs",
+                            "rm",
+                            "--cached",
+                            "--ignore-unmatch",
+                            "--",
+                            path
+                        ));
+
+                        if (remove.exitCode != 0) {
+                            reject(call, remove.output, null);
+                            return;
+                        }
+                    }
+
+                    if (target.exists() && !target.delete()) {
+                        reject(call, "The new file could not be deleted.", null);
+                        return;
+                    }
+                }
+
+                JSObject result = repositoryStatus(repository);
+                result.put("path", path);
+                result.put("restored", restored);
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, null);
+            }
+        });
+    }
+
+    @PluginMethod
     public void cloneRepository(PluginCall call) {
         String rawUrl = call.getString("url");
         String destination = call.getString("destination");
@@ -849,6 +949,58 @@ public class GitHubPlugin extends Plugin {
         try {
             File directory = new File(value).getCanonicalFile();
             return directory.isDirectory() ? directory : null;
+        } catch (IOException failure) {
+            return null;
+        }
+    }
+
+    private static String normalizeRepositoryPath(String value) {
+        if (value == null || value.isEmpty() || value.length() > 4096) {
+            return null;
+        }
+
+        if (!value.equals(value.trim())) return null;
+        if (value.startsWith("/") || value.indexOf('\\') >= 0) return null;
+
+        for (int index = 0; index < value.length(); index += 1) {
+            char character = value.charAt(index);
+            if (character < 32 || character == 127) return null;
+        }
+
+        String[] segments = value.split("/", -1);
+
+        for (String segment : segments) {
+            if (
+                segment.isEmpty() ||
+                ".".equals(segment) ||
+                "..".equals(segment) ||
+                ".git".equalsIgnoreCase(segment)
+            ) {
+                return null;
+            }
+        }
+
+        return value;
+    }
+
+    private static File resolveRepositoryPath(File repository, String path) {
+        try {
+            File target = new File(repository, path);
+            File parent = target.getParentFile();
+
+            if (parent == null) return null;
+
+            String root = repository.getCanonicalPath();
+            String parentPath = parent.getCanonicalPath();
+
+            if (
+                !parentPath.equals(root) &&
+                !parentPath.startsWith(root + File.separator)
+            ) {
+                return null;
+            }
+
+            return new File(parent, target.getName());
         } catch (IOException failure) {
             return null;
         }

@@ -83,6 +83,13 @@ export async function repositoryStatus(directory) {
   return NativeGitHub.status({ directory });
 }
 
+export async function revertRepositoryFile({ directory, path }) {
+  if (!NativeGitHub) {
+    throw new Error("File revert is only available in the Android app.");
+  }
+  return NativeGitHub.revertFile({ directory, path });
+}
+
 export async function cloneRepository({ url, destination, token, branch }) {
   if (!NativeGitHub) {
     throw new Error("GitHub tools are only available in the Android app.");

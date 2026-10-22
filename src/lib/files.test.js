@@ -177,6 +177,68 @@ test("rejects unsafe or ambiguous patches", () => {
     ),
     null,
   );
+  assert.equal(
+    validateFilePatch(
+      [
+        "diff --git a/old.txt b/new.txt",
+        "similarity index 90%",
+        "rename from old.txt",
+        "rename to new.txt",
+        "--- a/new.txt",
+        "+++ b/new.txt",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    ),
+    null,
+  );
+  assert.equal(
+    validateFilePatch(
+      [
+        "diff --git a/old.txt b/copy.txt",
+        "similarity index 90%",
+        "copy from old.txt",
+        "copy to copy.txt",
+        "--- a/copy.txt",
+        "+++ b/copy.txt",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    ),
+    null,
+  );
+  assert.equal(
+    validateFilePatch(
+      [
+        "diff --git a/run.sh b/run.sh",
+        "old mode 100644",
+        "new mode 100755",
+        "--- a/run.sh",
+        "+++ b/run.sh",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    ),
+    null,
+  );
+  assert.equal(
+    validateFilePatch(
+      [
+        "diff --git a/image.png b/image.png",
+        "index 1111111..2222222 100644",
+        "GIT binary patch",
+        "literal 0",
+        "",
+      ].join("\n"),
+    ),
+    null,
+  );
   assert.equal(validateFilePatch(""), null);
   assert.throws(() =>
     buildFilePatch({ path: "../secret", previousContent: "", nextContent: "x" }),

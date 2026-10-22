@@ -5,6 +5,7 @@ import {
   joinWorkspacePath,
   parseRemoteUrl,
   parseRepositoryUrl,
+  revertRepositoryFile,
 } from "./github.js";
 import { PROJECT_DIRECTORY } from "./project.js";
 
@@ -56,6 +57,16 @@ test("joins a repository name inside the workspace only", () => {
   assert.equal(joinWorkspacePath(PROJECT_DIRECTORY, "a/b"), null);
   assert.equal(joinWorkspacePath("relative", "repo"), null);
   assert.equal(joinWorkspacePath("/", "repo"), null);
+});
+
+test("requires the native app for file reversion", async () => {
+  await assert.rejects(
+    revertRepositoryFile({
+      directory: PROJECT_DIRECTORY,
+      path: "src/a.js",
+    }),
+    /only available in the Android app/,
+  );
 });
 
 test("validates branch names for the local git runtime", () => {

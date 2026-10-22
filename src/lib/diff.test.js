@@ -189,6 +189,57 @@ test("reverses modified, added, and deleted file patches", () => {
   assert.equal(reverseUnifiedPatch(null), "");
 });
 
+test("refuses binary, rename, copy, and mode-only patches", () => {
+  const patches = [
+    [
+      "diff --git a/image.png b/image.png",
+      "index 1111111..2222222 100644",
+      "GIT binary patch",
+      "literal 0",
+      "",
+    ].join("\n"),
+    [
+      "diff --git a/old.txt b/new.txt",
+      "similarity index 90%",
+      "rename from old.txt",
+      "rename to new.txt",
+      "--- a/new.txt",
+      "+++ b/new.txt",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n"),
+    [
+      "diff --git a/old.txt b/copy.txt",
+      "similarity index 90%",
+      "copy from old.txt",
+      "copy to copy.txt",
+      "--- a/copy.txt",
+      "+++ b/copy.txt",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n"),
+    [
+      "diff --git a/run.sh b/run.sh",
+      "old mode 100644",
+      "new mode 100755",
+      "--- a/run.sh",
+      "+++ b/run.sh",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n"),
+  ];
+
+  for (const patch of patches) {
+    assert.equal(reverseUnifiedPatch(patch), "");
+  }
+});
+
 test("refuses to reverse ambiguous multi-file patches", () => {
   const first = [
     "diff --git a/a.txt b/a.txt",

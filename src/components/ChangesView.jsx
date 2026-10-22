@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { projectLabel } from "../lib/project";
 import { CopyButton } from "./CopyButton";
 import { parseUnifiedPatch } from "../lib/diff";
+import { describeRevert } from "../lib/revert";
 import {
   patchForFile,
   summarizeDiffs,
@@ -56,6 +57,7 @@ export function ChangesView({
   project,
   onOpenFile,
   onRevertFile,
+  revertSupported = false,
 }) {
   const summary = summarizeDiffs(changes.files);
   const [viewMode, setViewMode] = useState("split");
@@ -63,14 +65,12 @@ export function ChangesView({
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
 
-  async function revertFile(path, patch) {
-    if (!connected || !patch || revertingPath) return;
+  async function revertFile(path, status) {
+    const copy = describeRevert(path, status);
 
-    if (
-      !window.confirm(
-        `Revert ${path}? This discards its uncommitted changes and cannot be undone from this screen.`,
-      )
-    ) {
+    if (!connected || !revertSupported || revertingPath) return;
+
+    if (!window.confirm(copy.confirmation)) {
       return;
     }
 
@@ -79,8 +79,8 @@ export function ChangesView({
     setActionMessage("");
 
     try {
-      await onRevertFile?.(path, patch);
-      setActionMessage(`Reverted ${path}.`);
+      await onRevertFile?.(path);
+      setActionMessage(copy.success);
     } catch (error) {
       setActionError(
         error instanceof Error && error.message
@@ -206,6 +206,7 @@ export function ChangesView({
           {changes.files.map((file) => {
             const path = file.file ?? file.path ?? "unknown file";
             const patch = patchForFile(changes.diffs, path);
+            const revertCopy = describeRevert(path, file.status);
 
             return (
               <details className="diff-file" key={path}>
@@ -250,15 +251,21 @@ export function ChangesView({
                   <button
                     type="button"
                     className="danger-button compact-button"
-                    onClick={() => revertFile(path, patch)}
-                    disabled={!connected || !patch || Boolean(revertingPath)}
+                    onClick={() => revertFile(path, file.status)}
+                    disabled={
+                      !connected ||
+                      !revertSupported ||
+                      Boolean(revertingPath)
+                    }
                     title={
-                      patch
-                        ? `Revert uncommitted changes in ${path}`
-                        : "A patch is required to revert this file"
+                      revertSupported
+                        ? revertCopy.title
+                        : "File revert is only available in the Android app"
                     }
                   >
-                    {revertingPath === path ? "Reverting…" : "Revert file"}
+                    {revertingPath === path
+                      ? revertCopy.pending
+                      : revertCopy.action}
                   </button>
                 </div>
                 {patch ? (

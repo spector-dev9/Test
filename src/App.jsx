@@ -24,12 +24,12 @@ import {
   useModelsAndCommands,
   useProjectChanges,
 } from "./hooks/useWorkspaceResources";
+import { OPENCODE_BASE_URL } from "./lib/opencode";
 import {
-  OPENCODE_BASE_URL,
-  applyProjectPatch,
-} from "./lib/opencode";
-import { reverseUnifiedPatch } from "./lib/diff";
-import { validateFilePatch } from "./lib/files";
+  isGitHubToolsSupported,
+  revertRepositoryFile,
+} from "./lib/github";
+import { normalizePatchPath } from "./lib/files";
 import {
   FALLBACK_PROJECT,
   PROJECT_DIRECTORY,
@@ -72,6 +72,7 @@ import {
 const MODEL_STORAGE_KEY = "opencode-mobile.preferred-model";
 const WORKSPACE_STORAGE_KEY = "opencode-mobile.workspace-directory";
 const RUNTIME_READY_STORAGE_KEY = "opencode-mobile.runtime-ready";
+const GIT_REVERT_SUPPORTED = isGitHubToolsSupported();
 
 function readStoredModel() {
   if (typeof window === "undefined") return null;
@@ -830,16 +831,20 @@ export default function App() {
   );
 
   const handleRevertFile = useCallback(
-    async (path, patch) => {
-      const reverse = reverseUnifiedPatch(patch);
-      const reversed = validateFilePatch(reverse);
-      if (!reverse || !reversed || reversed.path !== path) {
-        throw new Error(
-          `The diff for ${path} cannot be reversed safely from this app.`,
-        );
+    async (path) => {
+      if (!GIT_REVERT_SUPPORTED) {
+        throw new Error("File revert is only available in the Android app.");
       }
 
-      await applyProjectPatch(activeDirectory, reverse);
+      const normalized = normalizePatchPath(path);
+      if (!normalized || normalized !== path) {
+        throw new Error("The file path cannot be reverted safely.");
+      }
+
+      await revertRepositoryFile({
+        directory: activeDirectory,
+        path: normalized,
+      });
       refreshChanges();
     },
     [activeDirectory, refreshChanges],
@@ -1126,6 +1131,7 @@ export default function App() {
                 project={activeProject}
                 onOpenFile={handleOpenFileFromChanges}
                 onRevertFile={handleRevertFile}
+                revertSupported={GIT_REVERT_SUPPORTED}
               />
               </ErrorBoundary>
             ) : null}
