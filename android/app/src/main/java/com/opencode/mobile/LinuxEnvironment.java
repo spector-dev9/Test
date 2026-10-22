@@ -13,6 +13,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -22,7 +23,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
@@ -328,28 +328,46 @@ public class LinuxEnvironment extends Plugin {
     }
 
     private boolean ensureNode() throws Exception {
-        ProcessResult check = runLinuxCommand("node -v && npm -v", null);
-        if (check.exitCode == 0) {
-            String nodeVersion = "";
-            for (String line : check.output.split("\n")) {
-                if (line.startsWith("v")) {
-                    nodeVersion = line.trim();
-                    break;
-                }
-            }
-            // Node.js 20 is too old for npm to resolve optional dependencies
-            // that require ^20.19 or newer (Vite 8, ESLint 10, and friends).
-            if (nodeVersion.matches("v(2[2-9]|[3-9][0-9])\\..*")) {
-                return true;
-            }
-        }
-        ProcessResult result = runLinuxCommand(
-            "apk add --no-cache -u nodejs npm", null);
-        if (result.exitCode == 0 || allPackagesInstalled("nodejs npm")) {
+        if (isNodeUsable()) {
             return true;
         }
-        Log.w(TAG, "apk could not install Node.js: " + result.output);
+        String install = "apk add --no-cache -u ";
+        if (!hasNodeRepository()) {
+            install += "--repository=" + ALPINE_NODE_REPOSITORY + " ";
+        }
+        install += "nodejs npm";
+        ProcessResult result = runLinuxCommand(install, null);
+        if (result.exitCode != 0 && !allPackagesInstalled("nodejs npm")) {
+            Log.w(TAG, "apk could not install Node.js: " + result.output);
+            return false;
+        }
+        if (isNodeUsable()) {
+            return true;
+        }
+        Log.w(TAG, "Node.js was installed but is not usable: " + result.output);
         return false;
+    }
+
+    private boolean isNodeUsable() throws Exception {
+        ProcessResult check = runLinuxCommand("node -v && npm -v", null);
+        if (check.exitCode != 0) {
+            return false;
+        }
+        for (String line : check.output.split("\n")) {
+            if (line.startsWith("v")) {
+                return line.trim().matches("v(2[2-9]|[3-9][0-9])\\..*");
+            }
+        }
+        return false;
+    }
+
+    private boolean hasNodeRepository() {
+        try {
+            return readText(new File(rootfsPath(), "etc/apk/repositories"))
+                .contains("v3.21/main");
+        } catch (IOException failure) {
+            return false;
+        }
     }
 
     private void ensureProot() throws IOException {
@@ -383,10 +401,7 @@ public class LinuxEnvironment extends Plugin {
         if (!repositories.canWrite() && !repositories.setWritable(true, true)) {
             throw new IOException("The Alpine package list is read-only.");
         }
-        String current = new String(
-            Files.readAllBytes(repositories.toPath()),
-            StandardCharsets.UTF_8
-        );
+        String current = readText(repositories);
         // Alpine 3.20 ships Node.js 20.15, which npm rejects when it resolves
         // optional dependencies that need ^20.19 or newer (Vite 8, ESLint 10).
         // Node.js 22 from 3.21 keeps the rest of the 3.20 base in place.
@@ -395,6 +410,69 @@ public class LinuxEnvironment extends Plugin {
         }
         String next = current.endsWith("\n") ? current : current + "\n";
         writeText(repositories, next + ALPINE_NODE_REPOSITORY + "\n");
+    }
+
+    private static String readText(File file) throws IOException {
+        try (
+            InputStream input = new BufferedInputStream(new FileInputStream(file));
+            ByteArrayOutputStream output = new ByteArrayOutputStream()
+        ) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : bytes) {
+                hex.append(String.format(Locale.US, "%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception failure) {
+            return null;
+        }
+    }
+
+    private File nodeModulesStore(File workspace, String command) throws IOException {
+        if (workspace == null || !usesNodeModules(workspace, command)) {
+            return null;
+        }
+        File appRoot = getContext().getFilesDir().getCanonicalFile();
+        String workspacePath = workspace.getCanonicalPath();
+        if (workspacePath.equals(appRoot.getPath())
+            || workspacePath.startsWith(appRoot.getPath() + File.separator)) {
+            return null;
+        }
+        File mountPoint = new File(workspace, "node_modules");
+        if (!mountPoint.isDirectory()) {
+            if (mountPoint.exists() || !mountPoint.mkdirs()) {
+                Log.w(TAG, "Could not prepare " + mountPoint + " for node_modules.");
+                return null;
+            }
+        }
+        String key = sha256Hex(workspacePath);
+        if (key == null) {
+            return null;
+        }
+        File store = new File(appRoot, "linux/node_modules/" + key.substring(0, 16));
+        mkdirs(store);
+        return store;
+    }
+
+    private static boolean usesNodeModules(File workspace, String command) {
+        if (new File(workspace, "package.json").isFile()
+            || new File(workspace, "node_modules").isDirectory()) {
+            return true;
+        }
+        return command != null
+            && command.matches("(?s).*\\b(npm|npx|pnpm|yarn|corepack|bunx?)\\b.*");
     }
 
     private File resolveWorkspace(String value) {
@@ -440,6 +518,17 @@ public class LinuxEnvironment extends Plugin {
             String path = workspace.getAbsolutePath();
             argv.add("-b");
             argv.add(path + ":" + path);
+            File nodeModules = null;
+            try {
+                nodeModules = nodeModulesStore(workspace, command);
+            } catch (IOException failure) {
+                Log.w(TAG, "Could not prepare the private node_modules store.", failure);
+            }
+            if (nodeModules != null) {
+                String mountPoint = new File(workspace, "node_modules").getAbsolutePath();
+                argv.add("-b");
+                argv.add(nodeModules.getAbsolutePath() + ":" + mountPoint);
+            }
         }
         argv.add("-w");
         argv.add(workspace == null ? "/root" : workspace.getAbsolutePath());
