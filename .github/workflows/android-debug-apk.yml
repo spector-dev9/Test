@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - opencode-mobile
     paths:
       - "src/**"
       - "public/**"
