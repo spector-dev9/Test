@@ -16,11 +16,13 @@ import { ptyWebSocketUrl, validateTerminalSize } from "../lib/pty";
 import { openPtySocket } from "../lib/ptySocket";
 import { projectLabel } from "../lib/project";
 import {
+  ensureLinuxEnvironment,
   isLinuxEnvironmentSupported,
   isLinuxEnvironmentReady,
   runLinuxCommand,
 } from "../lib/linuxEnvironment.js";
 import { readUiPrefs } from "../lib/uiPrefs.js";
+import { commandHint } from "../lib/shell.js";
 import { copyText } from "../lib/clipboard";
 
 const RESIZE_DEBOUNCE_MS = 220;
@@ -147,6 +149,8 @@ export function TerminalView({
   const [terminalReady, setTerminalReady] = useState(false);
   const [linuxSupported, setLinuxSupported] = useState(false);
   const [linuxReady, setLinuxReady] = useState(false);
+  const [linuxPreparing, setLinuxPreparing] = useState(false);
+  const [linuxError, setLinuxError] = useState("");
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxCommand, setLinuxCommand] = useState("");
   const [linuxRunning, setLinuxRunning] = useState(false);
@@ -350,24 +354,65 @@ export function TerminalView({
     }
   }, [terminalFontSize]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function check() {
-      try {
-        setLinuxSupported(Boolean(isLinuxEnvironmentSupported()));
-        if (isLinuxEnvironmentSupported()) {
-          const ready = await isLinuxEnvironmentReady();
-          if (!cancelled) setLinuxReady(Boolean(ready?.ready));
-        }
-      } catch {
-        if (!cancelled) setLinuxSupported(false);
-      }
+  const checkLinux = useCallback(async () => {
+    if (!isLinuxEnvironmentSupported()) {
+      setLinuxSupported(false);
+      setLinuxReady(false);
+      return;
     }
-    check();
-    return () => {
-      cancelled = true;
-    };
+
+    setLinuxSupported(true);
+
+    try {
+      const ready = await isLinuxEnvironmentReady();
+      setLinuxReady(Boolean(ready?.ready));
+      setLinuxError(
+        ready?.ready
+          ? ""
+          : ready?.reason || "The Alpine environment is not prepared yet.",
+      );
+    } catch (failure) {
+      setLinuxReady(false);
+      setLinuxError(
+        failure?.message || "The Linux environment status is unavailable.",
+      );
+    }
   }, []);
+
+  useEffect(() => {
+    checkLinux();
+  }, [checkLinux]);
+
+  // The terminal stays mounted while other views are open, so the readiness
+  // state has to be refreshed when the view or the Linux panel is used.
+  useEffect(() => {
+    if (active) checkLinux();
+  }, [active, checkLinux]);
+
+  useEffect(() => {
+    if (showLinux) checkLinux();
+  }, [checkLinux, showLinux]);
+
+  async function prepareLinux() {
+    if (linuxPreparing) return;
+
+    setLinuxPreparing(true);
+    setLinuxError("");
+
+    try {
+      await ensureLinuxEnvironment();
+      await checkLinux();
+      setLinuxOutput(
+        (previous) => previous + "Alpine environment prepared.\n",
+      );
+    } catch (failure) {
+      setLinuxError(
+        failure?.message || "The Linux environment could not be prepared.",
+      );
+    } finally {
+      setLinuxPreparing(false);
+    }
+  }
 
   useEffect(() => {
     if (!enabled || !connected) return undefined;
@@ -602,8 +647,11 @@ export function TerminalView({
     setLinuxRunning(true);
     try {
       const result = await runLinuxCommand(command, directory);
+      const hint = commandHint(command, result.output);
       setLinuxOutput((previous) =>
-        previous + `$ ${command}\n${result.output}\n`
+        previous +
+          `$ ${command}\n${result.output}\n` +
+          (hint ? `Hint: ${hint}\n` : "")
       );
       setLinuxCommand("");
     } catch (failure) {
@@ -834,12 +882,18 @@ export function TerminalView({
             <p className="linux-note">
               Alpine aarch64 under PRoot. Commands run in{" "}
               <code>{directory}</code> with the same files the agent edits.
+              Commands are case-sensitive, and this is Alpine: use{" "}
+              <code>apk</code>, not <code>apt</code> or <code>pkg</code>.
             </p>
             <pre className="linux-output">{linuxOutput}</pre>
             <div className="linux-input">
               <input
                 className="linux-input-field"
                 value={linuxCommand}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="text"
                 onChange={(event) => {
                   setLinuxCommand(event.target.value);
                   if (linuxHistoryIndex !== -1) setLinuxHistoryIndex(-1);
@@ -891,11 +945,22 @@ export function TerminalView({
               >
                 {linuxRunning ? "Running…" : "Run"}
               </button>
-              {!linuxReady && (
-                <span className="linux-note">
-                  Not ready. Run "Ensure Linux" from settings first.
-                </span>
-              )}
+              {!linuxReady ? (
+                <div className="linux-not-ready">
+                  <span className="linux-note">
+                    {linuxError ||
+                      "The Alpine environment is not prepared yet."}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    onClick={prepareLinux}
+                    disabled={linuxPreparing}
+                  >
+                    {linuxPreparing ? "Preparing…" : "Prepare Linux"}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         )}

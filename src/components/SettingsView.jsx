@@ -90,6 +90,7 @@ export function SettingsView({
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState("");
   const [linuxReady, setLinuxReady] = useState(false);
+  const [linuxReason, setLinuxReason] = useState("");
   const [linuxBusy, setLinuxBusy] = useState(false);
   const [linuxOutput, setLinuxOutput] = useState("");
   const [linuxPkg, setLinuxPkg] = useState("");
@@ -120,9 +121,15 @@ export function SettingsView({
     async function check() {
       try {
         const ready = await isLinuxEnvironmentReady();
-        if (!cancelled) setLinuxReady(Boolean(ready?.ready));
-      } catch {
-        if (!cancelled) setLinuxReady(false);
+        if (!cancelled) {
+          setLinuxReady(Boolean(ready?.ready));
+          setLinuxReason(ready?.ready ? "" : ready?.reason || "");
+        }
+      } catch (failure) {
+        if (!cancelled) {
+          setLinuxReady(false);
+          setLinuxReason(failure?.message || "");
+        }
       }
     }
     check();
@@ -152,6 +159,7 @@ export function SettingsView({
       await ensureLinuxEnvironment();
       const ready = await isLinuxEnvironmentReady();
       setLinuxReady(Boolean(ready?.ready));
+      setLinuxReason(ready?.ready ? "" : ready?.reason || "");
       setLinuxOutput((previous) => previous + "Linux environment ready.\n");
     } catch (failure) {
       setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
@@ -649,6 +657,9 @@ export function SettingsView({
                 onChange={(event) => setLinuxPkg(event.target.value)}
                 placeholder="apk package (e.g. python3, nodejs)"
                 aria-label="apk package name"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 disabled={linuxBusy || !linuxReady}
               />
               <button
@@ -660,6 +671,12 @@ export function SettingsView({
                 Install
               </button>
             </div>
+            {linuxReason ? (
+              <p className="panel-note" role="status">
+                {linuxReason}
+              </p>
+            ) : null}
+
             {linuxOutput ? (
               <pre className="settings-log">{linuxOutput}</pre>
             ) : null}

@@ -7567,3 +7567,11 @@ html[data-theme="rose"] {
     font-size: 11px;
   }
 }
+
+.linux-not-ready {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}

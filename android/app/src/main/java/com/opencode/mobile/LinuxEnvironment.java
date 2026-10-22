@@ -78,7 +78,9 @@ public class LinuxEnvironment extends Plugin {
     @PluginMethod
     public void isReady(PluginCall call) {
         JSObject result = new JSObject();
-        result.put("ready", isLinuxReady());
+        boolean ready = isLinuxReady();
+        result.put("ready", ready);
+        result.put("reason", ready ? "" : notReadyReason());
         result.put("rootfsPath", rootfsPath().getAbsolutePath());
         call.resolve(result);
     }
@@ -168,6 +170,26 @@ public class LinuxEnvironment extends Plugin {
             && nativeLibraryFile(PROOT_TALLOC_LIBRARY).isFile()
             && nativeLibraryFile(PROOT_SHMEM_LIBRARY).isFile()
             && new File(rootfsPath(), MARKER_READY).isFile();
+    }
+
+    private String notReadyReason() {
+        if (!prootPath().isFile()
+            || !prootLoaderPath().isFile()
+            || !nativeLibraryFile(PROOT_TALLOC_LIBRARY).isFile()
+            || !nativeLibraryFile(PROOT_SHMEM_LIBRARY).isFile()) {
+            return "This build does not include the embedded PRoot runtime. "
+                + "Install the latest build of the app.";
+        }
+
+        if (!hasRootfs()) {
+            return "The Alpine rootfs is not extracted yet.";
+        }
+
+        if (!new File(rootfsPath(), MARKER_READY).isFile()) {
+            return "The Alpine environment has not been prepared yet.";
+        }
+
+        return "The Linux environment is not ready.";
     }
 
     private boolean hasRootfs() {

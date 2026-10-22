@@ -10,9 +10,14 @@ export function isLinuxEnvironmentSupported() {
 
 export async function isLinuxEnvironmentReady() {
   if (!NativeLinuxEnvironment) {
-    return { ready: false, rootfsPath: "" };
+    return { ready: false, rootfsPath: "", reason: "" };
   }
-  return NativeLinuxEnvironment.isReady();
+  const result = await NativeLinuxEnvironment.isReady();
+  return {
+    ready: Boolean(result?.ready),
+    rootfsPath: typeof result?.rootfsPath === "string" ? result.rootfsPath : "",
+    reason: typeof result?.reason === "string" ? result.reason : "",
+  };
 }
 
 export async function ensureLinuxEnvironment() {
