@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  UI_FONT_FAMILIES,
   UI_PREF_DEFAULTS,
+  UI_THEMES,
   applyUiPrefs,
+  fontFamilyStack,
   normalizeUiPrefs,
   readUiPrefs,
   writeUiPrefs,
@@ -81,6 +84,8 @@ test("round-trips through storage and survives corrupt data", () => {
     fontScale: 130,
     terminalFontSize: 15,
     editorFontSize: UI_PREF_DEFAULTS.editorFontSize,
+    theme: UI_PREF_DEFAULTS.theme,
+    fontFamily: UI_PREF_DEFAULTS.fontFamily,
   });
 
   assert.deepEqual(readUiPrefs(memoryStorage()), UI_PREF_DEFAULTS);
@@ -122,11 +127,19 @@ test("applies preferences to the document root", () => {
     fontScale: 120,
     terminalFontSize: 15,
     editorFontSize: 12,
+    theme: UI_PREF_DEFAULTS.theme,
+    fontFamily: UI_PREF_DEFAULTS.fontFamily,
   });
   assert.equal(root.dataset.reduceMotion, "true");
   assert.equal(root.props["--ui-font-scale"], "1.2");
   assert.equal(root.props["--terminal-font-size"], "15px");
   assert.equal(root.props["--editor-font-size"], "12px");
+  assert.equal(root.dataset.theme, "violet");
+  assert.equal(root.dataset.fontFamily, "system");
+  assert.equal(
+    root.props["--ui-font-family"],
+    fontFamilyStack("system"),
+  );
 
   applyUiPrefs(UI_PREF_DEFAULTS, root);
   assert.equal(root.dataset.reduceMotion, "false");
@@ -134,4 +147,27 @@ test("applies preferences to the document root", () => {
 
   const detached = applyUiPrefs(UI_PREF_DEFAULTS, null);
   assert.deepEqual(detached, UI_PREF_DEFAULTS);
+});
+
+test("keeps only supported themes and font families", () => {
+  assert.equal(normalizeUiPrefs({ theme: "emerald" }).theme, "emerald");
+  assert.equal(normalizeUiPrefs({ theme: "neon" }).theme, "violet");
+  assert.equal(normalizeUiPrefs({ theme: 7 }).theme, "violet");
+  assert.equal(normalizeUiPrefs({ fontFamily: "monospace" }).fontFamily, "monospace");
+  assert.equal(normalizeUiPrefs({ fontFamily: "comic" }).fontFamily, "system");
+  assert.ok(UI_THEMES.includes("violet"));
+  assert.ok(UI_FONT_FAMILIES.includes("system"));
+});
+
+test("persists theme and font family choices", () => {
+  const storage = memoryStorage();
+
+  writeUiPrefs(
+    { ...UI_PREF_DEFAULTS, theme: "amber", fontFamily: "monospace" },
+    storage,
+  );
+
+  const stored = readUiPrefs(storage);
+  assert.equal(stored.theme, "amber");
+  assert.equal(stored.fontFamily, "monospace");
 });

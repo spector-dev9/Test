@@ -19,6 +19,7 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -27,6 +28,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.io.RandomAccessFile;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
@@ -84,6 +87,7 @@ final class LocalServerManager {
         final boolean installed;
         final boolean running;
         final String url;
+        final String dataDirectory;
 
         Snapshot(
             String state,
@@ -93,7 +97,8 @@ final class LocalServerManager {
             String version,
             String workspace,
             boolean installed,
-            boolean running
+            boolean running,
+            String dataDirectory
         ) {
             this.state = state;
             this.progress = progress;
@@ -104,6 +109,7 @@ final class LocalServerManager {
             this.installed = installed;
             this.running = running;
             this.url = URL;
+            this.dataDirectory = dataDirectory;
         }
 
         JSObject toJSObject() {
@@ -117,6 +123,7 @@ final class LocalServerManager {
             result.put("installed", installed);
             result.put("running", running);
             result.put("url", url);
+            result.put("dataDirectory", dataDirectory);
             return result;
         }
     }
@@ -677,7 +684,11 @@ final class LocalServerManager {
             version,
             WORKSPACE,
             installed,
-            STATE_RUNNING.equals(state) && isProcessAlive()
+            STATE_RUNNING.equals(state) && isProcessAlive(),
+            new File(
+                context.getFilesDir(),
+                "home/.local/share/opencode"
+            ).getAbsolutePath()
         );
     }
 
@@ -1071,21 +1082,38 @@ final class LocalServerManager {
         try (
             BufferedReader reader = new BufferedReader(
                 new InputStreamReader(source.getInputStream(), StandardCharsets.UTF_8)
+            );
+            OutputStream output = new FileOutputStream(logFile, true);
+            Writer writer = new BufferedWriter(
+                new OutputStreamWriter(output, StandardCharsets.UTF_8)
             )
         ) {
             String line;
+            int pending = 0;
+
             while ((line = reader.readLine()) != null) {
                 Log.i(TAG, line);
                 synchronized (lock) {
                     logs.addLast(line);
                     while (logs.size() > MAX_LOG_LINES) logs.removeFirst();
                 }
-                try (FileOutputStream output = new FileOutputStream(logFile, true)) {
-                    output.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                try {
+                    writer.write(line);
+                    writer.write("\n");
+                    pending += 1;
+
+                    // Flush in batches so a chatty server does not open and
+                    // close the log file for every line.
+                    if (pending >= 32) {
+                        writer.flush();
+                        pending = 0;
+                    }
                 } catch (IOException ignored) {
                     // Logging is best-effort.
                 }
             }
+
+            writer.flush();
         } catch (IOException error) {
             Log.d(TAG, "Server output stream closed", error);
         }

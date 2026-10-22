@@ -601,7 +601,7 @@ export function TerminalView({
     setLinuxHistoryIndex(-1);
     setLinuxRunning(true);
     try {
-      const result = await runLinuxCommand(command);
+      const result = await runLinuxCommand(command, directory);
       setLinuxOutput((previous) =>
         previous + `$ ${command}\n${result.output}\n`
       );
@@ -831,6 +831,10 @@ export function TerminalView({
                 {linuxReady ? "ready" : "not ready"}
               </span>
             </div>
+            <p className="linux-note">
+              Alpine aarch64 under PRoot. Commands run in{" "}
+              <code>{directory}</code> with the same files the agent edits.
+            </p>
             <pre className="linux-output">{linuxOutput}</pre>
             <div className="linux-input">
               <input

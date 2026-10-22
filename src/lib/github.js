@@ -113,3 +113,95 @@ export async function commitAndPush({
     ...(email ? { email } : {}),
   });
 }
+
+export async function initRepository({ directory, branch, remote }) {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.initRepository({
+    directory,
+    ...(branch ? { branch } : {}),
+    ...(remote ? { remote } : {}),
+  });
+}
+
+export async function fetchRepository({ directory, token }) {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.fetchRepository({
+    directory,
+    ...(token ? { token } : {}),
+  });
+}
+
+export async function pullRepository({ directory, token }) {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.pullRepository({
+    directory,
+    ...(token ? { token } : {}),
+  });
+}
+
+export async function listBranches(directory) {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.listBranches({ directory });
+}
+
+export async function checkoutBranch({ directory, branch }) {
+  if (!NativeGitHub) {
+    throw new Error("GitHub tools are only available in the Android app.");
+  }
+  return NativeGitHub.checkoutBranch({ directory, branch });
+}
+
+const BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+
+export function isValidBranchName(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || !BRANCH_PATTERN.test(trimmed)) return false;
+  return !trimmed.includes("..") && !trimmed.startsWith("/") && !trimmed.endsWith("/");
+}
+
+export function parseRemoteUrl(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+
+  if (!trimmed) {
+    return { ok: false, error: "Enter the HTTPS address of the repository." };
+  }
+
+  let url;
+
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { ok: false, error: "Enter a valid HTTPS repository address." };
+  }
+
+  if (url.protocol !== "https:") {
+    return { ok: false, error: "Repository addresses must use HTTPS." };
+  }
+
+  if (url.username || url.password || url.search || url.hash) {
+    return {
+      ok: false,
+      error: "Repository addresses cannot include credentials or query parameters.",
+    };
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+
+  if (parts.length < 2) {
+    return {
+      ok: false,
+      error: "Use an address like https://github.com/owner/repository.",
+    };
+  }
+
+  return { ok: true, url: url.toString() };
+}

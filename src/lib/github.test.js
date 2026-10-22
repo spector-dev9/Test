@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { joinWorkspacePath, parseRepositoryUrl } from "./github.js";
+import {
+  isValidBranchName,
+  joinWorkspacePath,
+  parseRemoteUrl,
+  parseRepositoryUrl,
+} from "./github.js";
 import { PROJECT_DIRECTORY } from "./project.js";
 
 test("parses HTTPS repository URLs", () => {
@@ -51,4 +56,35 @@ test("joins a repository name inside the workspace only", () => {
   assert.equal(joinWorkspacePath(PROJECT_DIRECTORY, "a/b"), null);
   assert.equal(joinWorkspacePath("relative", "repo"), null);
   assert.equal(joinWorkspacePath("/", "repo"), null);
+});
+
+test("validates branch names for the local git runtime", () => {
+  assert.equal(isValidBranchName("main"), true);
+  assert.equal(isValidBranchName("feature/new-ui"), true);
+  assert.equal(isValidBranchName("release-1.2"), true);
+  assert.equal(isValidBranchName(""), false);
+  assert.equal(isValidBranchName("  "), false);
+  assert.equal(isValidBranchName("bad branch"), false);
+  assert.equal(isValidBranchName("../escape"), false);
+  assert.equal(isValidBranchName("/leading"), false);
+  assert.equal(isValidBranchName("trailing/"), false);
+  assert.equal(isValidBranchName(null), false);
+});
+
+test("validates remote addresses for the local git runtime", () => {
+  assert.deepEqual(parseRemoteUrl(" https://github.com/owner/repo "), {
+    ok: true,
+    url: "https://github.com/owner/repo",
+  });
+
+  for (const value of [
+    "",
+    "github.com/owner/repo",
+    "http://github.com/owner/repo",
+    "https://token@github.com/owner/repo",
+    "https://github.com/owner",
+    "https://github.com/owner/repo?x=1",
+  ]) {
+    assert.equal(parseRemoteUrl(value).ok, false, value);
+  }
 });

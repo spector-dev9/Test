@@ -776,6 +776,40 @@ test("loads providers, commands, and VCS data with validated options", async () 
   );
 });
 
+test("lists the server agents that back build and plan modes", async () => {
+  const calls = [];
+  const api = createOpenCodeApi({
+    app: {
+      agents: async (parameters) => {
+        calls.push(["agents", parameters]);
+        return fulfilled([
+          {
+            name: "build",
+            description: "The default agent.",
+            mode: "primary",
+          },
+          { name: "plan", description: "Plan mode.", mode: "primary" },
+          { name: "explore", description: "", mode: "subagent" },
+          { name: "custom agent", description: "", mode: "primary" },
+          { description: "missing a name", mode: "primary" },
+          "not an agent",
+        ]);
+      },
+    },
+  });
+
+  const agents = await api.listAgents(PROJECT_DIRECTORY);
+
+  assert.deepEqual(calls, [["agents", { directory: PROJECT_DIRECTORY }]]);
+  assert.deepEqual(
+    agents.map((agent) => agent.name),
+    ["build", "plan", "explore"],
+  );
+  assert.equal(agents[0].mode, "primary");
+  assert.equal(agents[0].hidden, false);
+  assert.equal(agents[1].description, "Plan mode.");
+});
+
 test("loads connected providers and starts GitHub Copilot sign-in", async () => {
   const calls = [];
   const api = createOpenCodeApi({

@@ -3,6 +3,7 @@ import { projectLabel } from "../lib/project";
 import { filterSessions } from "../lib/workspace";
 import { SessionDialog } from "./SessionDialog";
 import { SessionList } from "./SessionList";
+import { SessionTransfer } from "./SessionTransfer";
 
 export function SessionsView({
   sessions,
@@ -21,6 +22,7 @@ export function SessionsView({
   onRenameSession,
   onArchiveSession,
   onDeleteSession,
+  onSessionsRefreshed,
 }) {
   const [query, setQuery] = useState("");
   const [managedSession, setManagedSession] = useState(null);
@@ -143,6 +145,11 @@ export function SessionsView({
           />
         )}
       </div>
+
+      <SessionTransfer
+        sessions={sessions}
+        onSessionsRefreshed={onSessionsRefreshed}
+      />
 
       {managedSession ? (
         <SessionDialog

@@ -3,6 +3,7 @@ import { connectionFailure } from "../lib/connection";
 import {
   getVcsDiff,
   getVcsStatus,
+  listAgents,
   listCommands,
   listProviders,
 } from "../lib/opencode";
@@ -175,8 +176,90 @@ export function useModelsAndCommands(directory, connected) {
   return { models, commands, refresh };
 }
 
-export function useProjectChanges({ directory, connected, active }) {
-  const [changeState, setChangeState] = useState(initialChanges);
+export function useAgents(directory, connected) {
+  const [state, setState] = useState({
+    directory: null,
+    status: "idle",
+    data: [],
+    error: null,
+    errorKind: null,
+  });
+  const [refreshToken, setRefreshToken] = useState(0);
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    if (!directory || !connected) return undefined;
+
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    const controller = new AbortController();
+
+    async function load() {
+      try {
+        const agents = await listAgents(directory, controller.signal);
+
+        if (
+          controller.signal.aborted ||
+          requestRef.current !== requestId
+        ) {
+          return;
+        }
+
+        setState({
+          directory,
+          status: "ready",
+          data: agents,
+          error: null,
+          errorKind: null,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+
+        const failure = connectionFailure(
+          error,
+          "Agents could not be loaded.",
+        );
+
+        setState((previous) => ({
+          directory,
+          status: "error",
+          data: previous.directory === directory ? previous.data : [],
+          error: failure.message,
+          errorKind: failure.kind,
+        }));
+      }
+    }
+
+    load();
+
+    return () => controller.abort();
+  }, [connected, directory, refreshToken]);
+
+  const refresh = useCallback(() => {
+    if (!connected || !directory) return;
+    setRefreshToken((value) => value + 1);
+  }, [connected, directory]);
+
+  const agents = useMemo(() => {
+    if (state.directory !== directory) {
+      return {
+        directory,
+        status: directory && connected ? "loading" : "idle",
+        data: [],
+        error: null,
+        errorKind: null,
+      };
+    }
+
+    return !connected && state.data.length === 0
+      ? { ...state, status: "offline" }
+      : state;
+  }, [connected, directory, state]);
+
+  return { agents, refresh };
+}
+
+export function useProjectChanges({ directory, connected, active }) {  const [changeState, setChangeState] = useState(initialChanges);
   const [refreshToken, setRefreshToken] = useState(0);
   const requestRef = useRef(0);
 

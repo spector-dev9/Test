@@ -105,6 +105,7 @@ public class LinuxEnvironment extends Plugin {
     @PluginMethod
     public void runCommand(PluginCall call) {
         String command = call.getString("command");
+        String directory = call.getString("directory");
         if (command == null || command.trim().isEmpty()) {
             call.reject("A command is required.");
             return;
@@ -115,10 +116,11 @@ public class LinuxEnvironment extends Plugin {
                     call.reject("The Linux environment is not ready. Call ensureLinux first.");
                     return;
                 }
-                ProcessResult result = runLinuxCommand(command);
+                ProcessResult result = runLinuxCommand(command, directory);
                 JSObject res = new JSObject();
                 res.put("exitCode", result.exitCode);
                 res.put("output", result.output);
+                res.put("workingDirectory", workingDirectory(directory));
                 finish(call, res);
             } catch (Exception failure) {
                 reject(call, failure, null);
@@ -129,6 +131,7 @@ public class LinuxEnvironment extends Plugin {
     @PluginMethod
     public void installPackage(PluginCall call) {
         String pkg = call.getString("package");
+        String directory = call.getString("directory");
         if (pkg == null || pkg.trim().isEmpty()) {
             call.reject("A package name is required.");
             return;
@@ -139,7 +142,8 @@ public class LinuxEnvironment extends Plugin {
                     call.reject("The Linux environment is not ready. Call ensureLinux first.");
                     return;
                 }
-                ProcessResult result = runLinuxCommand("apk add --no-cache " + pkg);
+                ProcessResult result =
+                    runLinuxCommand("apk add --no-cache " + pkg, directory);
                 JSObject res = new JSObject();
                 res.put("exitCode", result.exitCode);
                 res.put("output", result.output);
@@ -278,9 +282,27 @@ public class LinuxEnvironment extends Plugin {
         writeText(resolv, RESOLV_CONF);
     }
 
-    private ProcessResult runLinuxCommand(String command) throws Exception {
+    private File resolveWorkspace(String value) {
+        if (value == null || value.trim().isEmpty()) return null;
+
+        try {
+            File directory = new File(value.trim()).getCanonicalFile();
+            return directory.isDirectory() ? directory : null;
+        } catch (IOException failure) {
+            return null;
+        }
+    }
+
+    private String workingDirectory(String value) {
+        File workspace = resolveWorkspace(value);
+        return workspace == null ? "/root" : workspace.getAbsolutePath();
+    }
+
+    private ProcessResult runLinuxCommand(String command, String directory)
+        throws Exception {
         File rootfs = rootfsPath();
         File proot = prootPath();
+        File workspace = resolveWorkspace(directory);
         writeResolv(rootfs);
 
         List<String> argv = new ArrayList<>();
@@ -297,8 +319,15 @@ public class LinuxEnvironment extends Plugin {
         argv.add("/sys/");
         argv.add("-b");
         argv.add("/proc/");
+        if (workspace != null) {
+            // Make the project folder visible inside the guest at the same
+            // path so the agent and the terminal share one workspace.
+            String path = workspace.getAbsolutePath();
+            argv.add("-b");
+            argv.add(path + ":" + path);
+        }
         argv.add("-w");
-        argv.add("/root");
+        argv.add(workspace == null ? "/root" : workspace.getAbsolutePath());
         argv.add("/usr/bin/env");
         argv.add("HOME=/root");
         argv.add("PATH=/bin:/usr/bin:/sbin:/usr/sbin");

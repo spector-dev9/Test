@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_TOOL_OUTPUT_CHARS,
   assistantErrorMessage,
   buildSessionTitle,
   filterCommands,
@@ -11,6 +12,7 @@ import {
   isModelSelectionValid,
   normalizeConversation,
   normalizeProviders,
+  normalizeToolPart,
   offlineHelp,
   offlineLabel,
   offlineTitle,
@@ -119,6 +121,10 @@ test("normalizes OpenCode conversation rows into safe display messages", () => {
           status: "completed",
           title: "",
           detail: "",
+          summary: "",
+          input: "",
+          output: "",
+          error: "",
         },
       ],
       error: "The response was stopped.",
@@ -132,8 +138,54 @@ test("normalizes OpenCode conversation rows into safe display messages", () => {
   assert.deepEqual(normalizeConversation([{ info: { role: "assistant" } }]), []);
 });
 
-test("maps known assistant errors without exposing raw server details", () => {
-  assert.equal(
+test("keeps tool input and output for expandable tool cards", () => {
+  const tool = normalizeToolPart({
+    id: "tool_9",
+    tool: "bash",
+    state: {
+      status: "completed",
+      title: "Run the test suite",
+      input: { command: "npm test", description: "run tests" },
+      output: "all green\n",
+    },
+  });
+
+  assert.equal(tool.name, "bash");
+  assert.equal(tool.status, "completed");
+  assert.equal(tool.title, "Run the test suite");
+  assert.equal(tool.summary, "npm test");
+  assert.equal(tool.detail, "npm test");
+  assert.match(tool.input, /"command": "npm test"/);
+  assert.equal(tool.output, "all green\n");
+  assert.equal(tool.error, "");
+});
+
+test("bounds oversized tool output instead of dropping it silently", () => {
+  const tool = normalizeToolPart({
+    id: "tool_10",
+    tool: "bash",
+    state: {
+      status: "completed",
+      input: { command: "cat huge.log" },
+      output: "x".repeat(MAX_TOOL_OUTPUT_CHARS + 500),
+    },
+  });
+
+  assert.ok(tool.output.length < MAX_TOOL_OUTPUT_CHARS + 200);
+  assert.match(tool.output, /truncated/);
+});
+
+test("falls back to a safe tool shape for malformed parts", () => {
+  const tool = normalizeToolPart({ id: "tool_11" });
+
+  assert.equal(tool.name, "tool");
+  assert.equal(tool.status, "unknown");
+  assert.equal(tool.summary, "");
+  assert.equal(tool.input, "");
+  assert.equal(tool.output, "");
+});
+
+test("maps known assistant errors without exposing raw server details", () => {  assert.equal(
     assistantErrorMessage({ name: "ProviderAuthError", data: "secret" }),
     "The model provider rejected authentication.",
   );

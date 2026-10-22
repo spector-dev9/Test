@@ -11,7 +11,14 @@ import {
 
 const LOAD_TIMEOUT_MS = 12000;
 
-export function PreviewView({ connected, active, onRunInTerminal }) {
+export function PreviewView({
+  connected,
+  active,
+  onRunInTerminal,
+  onClose,
+  fullscreen = false,
+  onFullscreenChange,
+}) {
   const [input, setInput] = useState(() => readStoredPreviewUrl() ?? "");
   const [command, setCommand] = useState(
     () => readStoredPreviewCommand() ?? "",
@@ -84,6 +91,27 @@ export function PreviewView({ connected, active, onRunInTerminal }) {
   useEffect(() => () => clearLoadTimer(), [clearLoadTimer]);
 
   useEffect(() => {
+    if (!fullscreen || typeof document === "undefined") return undefined;
+
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [fullscreen]);
+
+  useEffect(() => {
+    if (fullscreen && !active) {
+      onFullscreenChange?.(false);
+    }
+  }, [active, fullscreen, onFullscreenChange]);
+
+  const toggleFullscreen = useCallback(() => {
+    onFullscreenChange?.(!fullscreen);
+  }, [fullscreen, onFullscreenChange]);
+
+  useEffect(() => {
     if (!active || autoLoadedRef.current) return undefined;
 
     const stored = readStoredPreviewUrl();
@@ -116,13 +144,36 @@ export function PreviewView({ connected, active, onRunInTerminal }) {
   const frameVisible = Boolean(frameUrl) && phase !== "blocked";
 
   return (
-    <section className="preview-view" aria-labelledby="preview-heading">
+    <section
+      className={`preview-view${fullscreen ? " is-fullscreen" : ""}`}
+      aria-labelledby="preview-heading"
+    >
       <header className="preview-toolbar">
         <div className="preview-heading">
           <span className="panel-kicker">LOCAL PREVIEW</span>
           <h1 id="preview-heading">Preview</h1>
         </div>
         <div className="preview-actions">
+          {fullscreen ? (
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={toggleFullscreen}
+              title="Restore the preview inside the workspace"
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={toggleFullscreen}
+              disabled={!frameVisible}
+              title="Show the preview full screen"
+            >
+              Expand
+            </button>
+          )}
           <button
             type="button"
             className="secondary-button compact-button"
@@ -141,10 +192,22 @@ export function PreviewView({ connected, active, onRunInTerminal }) {
           >
             Open in browser
           </button>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={() => onClose?.()}
+            title="Close the preview and return to the chat"
+          >
+            Close
+          </button>
         </div>
       </header>
 
-      <form className="preview-url-row" onSubmit={submitUrl}>
+      <form
+        className="preview-url-row"
+        onSubmit={submitUrl}
+        hidden={fullscreen}
+      >
         <label className="sr-only" htmlFor="preview-url-input">
           Preview URL
         </label>
@@ -241,7 +304,11 @@ export function PreviewView({ connected, active, onRunInTerminal }) {
         </div>
       ) : null}
 
-      <form className="preview-command-row" onSubmit={submitCommand}>
+      <form
+        className="preview-command-row"
+        onSubmit={submitCommand}
+        hidden={fullscreen}
+      >
         <span className="panel-kicker">RUN IN TERMINAL</span>
         <div className="preview-command-fields">
           <label className="sr-only" htmlFor="preview-command-input">

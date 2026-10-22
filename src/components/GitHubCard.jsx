@@ -6,12 +6,18 @@ import {
   completeGitHubCopilot,
 } from "../lib/opencode";
 import {
+  checkoutBranch,
   cloneRepository,
   commitAndPush,
   copilotStatus,
+  fetchRepository,
+  initRepository,
   isGitHubToolsSupported,
   joinWorkspacePath,
+  listBranches,
+  parseRemoteUrl,
   parseRepositoryUrl,
+  pullRepository,
   repositoryStatus,
 } from "../lib/github";
 
@@ -55,6 +61,13 @@ export function GitHubCard({
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState("");
   const [pushNotice, setPushNotice] = useState("");
+  const [syncBusy, setSyncBusy] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
+  const [branches, setBranches] = useState([]);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [initBranch, setInitBranch] = useState("main");
+  const [initRemote, setInitRemote] = useState("");
   const pollTimer = useRef(null);
   const pollAttempts = useRef(0);
   const authController = useRef(null);
@@ -63,6 +76,10 @@ export function GitHubCard({
   const parsedRepository = useMemo(
     () => parseRepositoryUrl(repoUrl),
     [repoUrl],
+  );
+  const parsedInitRemote = useMemo(
+    () => (initRemote.trim() ? parseRemoteUrl(initRemote) : { ok: true, url: "" }),
+    [initRemote],
   );
   const cloneBase = workspaceDirectory ?? directory;
   const destination = parsedRepository.ok && cloneBase
@@ -203,6 +220,109 @@ export function GitHubCard({
       cancelled = true;
     };
   }, [directory, native]);
+
+  useEffect(() => {
+    if (!native || !directory || !repo?.isRepo) {
+      setBranches([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    listBranches(directory)
+      .then((value) => {
+        if (cancelled) return;
+        const names = Array.isArray(value?.branches) ? value.branches : [];
+        setBranches(names);
+        setSelectedBranch((current) =>
+          names.includes(current) ? current : value?.current || "",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBranches([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [directory, native, repo?.isRepo, repo?.branch]);
+
+  async function syncRepository(action) {
+    if (syncBusy) return;
+
+    setSyncBusy(action);
+    setSyncError("");
+    setSyncNotice("");
+
+    try {
+      const token = repoToken.trim() || undefined;
+      const result =
+        action === "fetch"
+          ? await fetchRepository({ directory, token })
+          : await pullRepository({ directory, token });
+
+      setSyncNotice(
+        action === "fetch"
+          ? `Fetched from ${result?.remote || "origin"}.`
+          : `Pulled ${result?.branch || "the current branch"}.`,
+      );
+      await refreshRepo();
+      onProjectsChanged?.();
+    } catch (failure) {
+      setSyncError(failure?.message || "The repository could not be synced.");
+    } finally {
+      setSyncBusy("");
+    }
+  }
+
+  async function switchBranch() {
+    const target = selectedBranch.trim();
+
+    if (!target || target === repo?.branch || syncBusy) return;
+
+    setSyncBusy("checkout");
+    setSyncError("");
+    setSyncNotice("");
+
+    try {
+      const result = await checkoutBranch({ directory, branch: target });
+      setSyncNotice(`Switched to ${result?.branch || target}.`);
+      await refreshRepo();
+      onProjectsChanged?.();
+    } catch (failure) {
+      setSyncError(failure?.message || "The branch could not be switched.");
+    } finally {
+      setSyncBusy("");
+    }
+  }
+
+  async function initializeRepository() {
+    if (syncBusy) return;
+
+    setSyncBusy("init");
+    setSyncError("");
+    setSyncNotice("");
+
+    try {
+      const result = await initRepository({
+        directory,
+        branch: initBranch.trim() || "main",
+        remote: parsedInitRemote.ok && parsedInitRemote.url
+          ? parsedInitRemote.url
+          : undefined,
+      });
+      setSyncNotice(
+        `Initialized a Git repository on ${result?.branch || initBranch.trim() || "main"}.`,
+      );
+      await refreshRepo();
+    } catch (failure) {
+      setSyncError(
+        failure?.message || "The folder could not be turned into a repository.",
+      );
+    } finally {
+      setSyncBusy("");
+    }
+  }
 
   async function startCopilot() {
     stopAuthAttempt();
@@ -379,15 +499,15 @@ export function GitHubCard({
       : providers.status === "checking" || providers.status === "refreshing"
         ? "Checking"
         : providers.connected
-          ? "Connected"
+          ? "Signed in"
           : "Not signed in";
 
   return (
     <div className="panel settings-card">
       <div className="panel-heading">
         <div>
-          <span className="panel-kicker">GITHUB</span>
-          <h2>Models and repositories</h2>
+          <span className="panel-kicker">GITHUB COPILOT</span>
+          <h2>Copilot models</h2>
         </div>
         <span className={`status-chip ${copilotTone}`}>
           <span className={`dot ${copilotTone}`} />
@@ -396,9 +516,10 @@ export function GitHubCard({
       </div>
 
       <p className="panel-note">
-        Sign in with GitHub Copilot to use Copilot models in OpenCode. Pushing
-        uses a separate repository token with contents write access; the
-        Copilot sign-in token cannot push code.
+        This sign-in only unlocks Copilot models inside OpenCode. It does not
+        grant access to repositories: cloning, fetching, and pushing below use
+        a separate repository token, and the Copilot token cannot read or
+        write code.
       </p>
 
       <div className="settings-runtime-actions">
@@ -460,8 +581,8 @@ export function GitHubCard({
 
       <div className="panel-heading">
         <div>
-          <span className="panel-kicker">REPOSITORY</span>
-          <h3>{repo?.isRepo ? repo.branch || "Detached HEAD" : "Clone a repository"}</h3>
+          <span className="panel-kicker">REPOSITORY ACCESS</span>
+          <h3>{repo?.isRepo ? repo.branch || "Detached HEAD" : "No repository here"}</h3>
         </div>
         <span
           className={`status-chip ${repo?.isRepo ? "online" : "offline"}`}
@@ -502,6 +623,90 @@ export function GitHubCard({
         <p className="panel-note" role="alert">
           {repoError}
         </p>
+      ) : null}
+
+      {repo?.isRepo ? (
+        <>
+          <div className="github-sync">
+            <div className="settings-runtime-actions">
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                onClick={() => syncRepository("fetch")}
+                disabled={Boolean(syncBusy) || !repo?.remote}
+                title={
+                  repo?.remote
+                    ? "Fetch the latest refs from origin"
+                    : "This repository has no origin remote"
+                }
+              >
+                {syncBusy === "fetch" ? "Fetching…" : "Fetch"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                onClick={() => syncRepository("pull")}
+                disabled={Boolean(syncBusy) || !repo?.remote}
+                title={
+                  repo?.remote
+                    ? "Fast-forward this branch from origin"
+                    : "This repository has no origin remote"
+                }
+              >
+                {syncBusy === "pull" ? "Pulling…" : "Pull"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                onClick={refreshRepo}
+                disabled={repoBusy}
+              >
+                {repoBusy ? "Checking…" : "Refresh status"}
+              </button>
+            </div>
+
+            {branches.length > 0 ? (
+              <div className="github-branch-row">
+                <label className="github-field">
+                  <span>Branch</span>
+                  <select
+                    value={selectedBranch}
+                    onChange={(event) => setSelectedBranch(event.target.value)}
+                  >
+                    {branches.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button compact-button"
+                  onClick={switchBranch}
+                  disabled={
+                    Boolean(syncBusy) ||
+                    !selectedBranch ||
+                    selectedBranch === repo?.branch
+                  }
+                >
+                  {syncBusy === "checkout" ? "Switching…" : "Switch"}
+                </button>
+              </div>
+            ) : null}
+
+            {syncError ? (
+              <p className="panel-note" role="alert">
+                {syncError}
+              </p>
+            ) : null}
+            {syncNotice ? (
+              <p className="panel-note" role="status">
+                {syncNotice}
+              </p>
+            ) : null}
+          </div>
+        </>
       ) : null}
 
       {repo?.isRepo ? (
@@ -595,14 +800,80 @@ export function GitHubCard({
           {pushNotice ? <p className="panel-note">{pushNotice}</p> : null}
         </form>
       ) : (
-        <form
-          className="github-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            clone();
-          }}
-        >
-          <h3>Clone with HTTPS</h3>
+        <>
+          <form
+            className="github-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              initializeRepository();
+            }}
+          >
+            <h3>Start a repository here</h3>
+            <p className="panel-note">
+              The workspace folder is not a Git repository yet. Initialize one
+              to track changes, then add a remote to push or pull.
+            </p>
+            <div className="github-field-row">
+              <label className="github-field">
+                <span>First branch</span>
+                <input
+                  value={initBranch}
+                  onChange={(event) => setInitBranch(event.target.value)}
+                  placeholder="main"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="github-field">
+                <span>Remote (optional)</span>
+                <input
+                  value={initRemote}
+                  onChange={(event) => setInitRemote(event.target.value)}
+                  placeholder="https://github.com/owner/repository"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+            {initRemote.trim() && !parsedInitRemote.ok ? (
+              <p className="panel-note" role="alert">
+                {parsedInitRemote.error}
+              </p>
+            ) : null}
+            <div className="settings-runtime-actions">
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={
+                  syncBusy === "init" ||
+                  !parsedInitRemote.ok ||
+                  !initBranch.trim()
+                }
+              >
+                {syncBusy === "init" ? "Initializing…" : "Initialize repository"}
+              </button>
+            </div>
+            {syncError ? (
+              <p className="panel-note" role="alert">
+                {syncError}
+              </p>
+            ) : null}
+            {syncNotice ? (
+              <p className="panel-note" role="status">
+                {syncNotice}
+              </p>
+            ) : null}
+          </form>
+
+          <form
+            className="github-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              clone();
+            }}
+          >
+            <h3>Clone with HTTPS</h3>
           <label className="github-field">
             <span>Repository URL</span>
             <input
@@ -693,6 +964,7 @@ export function GitHubCard({
             </div>
           ) : null}
         </form>
+        </>
       )}
 
       <p className="panel-note">

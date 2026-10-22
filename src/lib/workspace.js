@@ -170,6 +170,79 @@ export function assistantErrorMessage(error) {
   );
 }
 
+export const MAX_TOOL_INPUT_CHARS = 4000;
+export const MAX_TOOL_OUTPUT_CHARS = 6000;
+export const MAX_TOOL_SUMMARY_CHARS = 160;
+
+const TOOL_DETAIL_KEYS = [
+  "filePath",
+  "path",
+  "file",
+  "command",
+  "pattern",
+  "url",
+];
+
+function truncate(value, limit) {
+  if (typeof value !== "string") return "";
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}\n… truncated (${value.length - limit} more characters)`;
+}
+
+function toolSummary(input) {
+  if (!input || typeof input !== "object") return "";
+
+  for (const key of TOOL_DETAIL_KEYS) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim().slice(0, MAX_TOOL_SUMMARY_CHARS);
+    }
+  }
+
+  if (typeof input.title === "string" && input.title.trim()) {
+    return input.title.trim().slice(0, MAX_TOOL_SUMMARY_CHARS);
+  }
+
+  return "";
+}
+
+function toolInputText(input) {
+  if (!input || typeof input !== "object") return "";
+
+  try {
+    return truncate(JSON.stringify(input, null, 2), MAX_TOOL_INPUT_CHARS);
+  } catch {
+    return "";
+  }
+}
+
+export function normalizeToolPart(part) {
+  const state =
+    part?.state && typeof part.state === "object" ? part.state : {};
+  const input =
+    state.input && typeof state.input === "object" ? state.input : null;
+  const summary = toolSummary(input);
+  const output =
+    typeof state.output === "string" ? state.output : "";
+  const error = typeof state.error === "string" ? state.error : "";
+
+  return {
+    id: part?.id,
+    name:
+      typeof part?.tool === "string" && part.tool ? part.tool : "tool",
+    status: typeof state.status === "string" ? state.status : "unknown",
+    title:
+      typeof state.title === "string" && state.title.trim()
+        ? state.title.trim().slice(0, 200)
+        : "",
+    detail: summary.slice(0, 300),
+    summary,
+    input: toolInputText(input),
+    output: truncate(output, MAX_TOOL_OUTPUT_CHARS),
+    error: truncate(error, 2000),
+  };
+}
+
 export function normalizeConversation(rows) {
   if (!Array.isArray(rows)) return [];
 
@@ -207,49 +280,7 @@ export function normalizeConversation(rows) {
 
     const tools = parts
       .filter((part) => part?.type === "tool")
-      .map((part) => {
-        const state =
-          part.state && typeof part.state === "object" ? part.state : {};
-        const input =
-          state.input && typeof state.input === "object" ? state.input : null;
-
-        let detail = "";
-
-        if (input) {
-          for (const key of [
-            "filePath",
-            "path",
-            "file",
-            "command",
-            "pattern",
-            "url",
-          ]) {
-            const value = input[key];
-            if (typeof value === "string" && value.trim()) {
-              detail = value.trim();
-              break;
-            }
-          }
-
-          if (!detail && typeof input.title === "string" && input.title.trim()) {
-            detail = input.title.trim();
-          }
-        }
-
-        return {
-          id: part.id,
-          name:
-            typeof part.tool === "string" && part.tool
-              ? part.tool
-              : "tool",
-          status: typeof state.status === "string" ? state.status : "unknown",
-          title:
-            typeof state.title === "string" && state.title.trim()
-              ? state.title.trim().slice(0, 200)
-              : "",
-          detail: detail.slice(0, 300),
-        };
-      });
+      .map((part) => normalizeToolPart(part));
 
     const error =
       info.role === "assistant"

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
 import "./App.css";
+import { AppearanceView } from "./components/AppearanceView";
 import { ChangesView } from "./components/ChangesView";
 import { ChatView } from "./components/ChatView";
 import { ContextView } from "./components/ContextView";
@@ -18,6 +19,7 @@ import { useOpenCodeOverview } from "./hooks/useOpenCodeOverview";
 import { useOpenCodeProjects } from "./hooks/useOpenCodeProjects";
 import { useSessionConversation } from "./hooks/useSessionConversation";
 import {
+  useAgents,
   useModelsAndCommands,
   useProjectChanges,
 } from "./hooks/useWorkspaceResources";
@@ -29,6 +31,16 @@ import {
   normalizeProjectDirectory,
 } from "./lib/project";
 import { registerProjectDirectories } from "./lib/projectScope";
+import {
+  BACK_ACTIONS,
+  previousView,
+  resolveBackAction,
+} from "./lib/navigation.js";
+import {
+  readStoredAgentMode,
+  resolveAgentName,
+  storeAgentMode,
+} from "./lib/agentMode.js";
 import {
   readStoredActiveView,
   readStoredSessionId,
@@ -203,7 +215,9 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [fileIntent, setFileIntent] = useState(null);
   const [terminalIntent, setTerminalIntent] = useState(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [uiPrefs, setUiPrefs] = useState(() => readUiPrefs());
+  const [agentMode, setAgentMode] = useState(() => readStoredAgentMode());
   const menuButtonRef = useRef(null);
   const drawerRef = useRef(null);
   const wasMenuOpen = useRef(false);
@@ -310,6 +324,7 @@ export default function App() {
   } = overview;
 
   const resources = useModelsAndCommands(activeDirectory, connected);
+  const { agents } = useAgents(activeDirectory, connected);
   const { changes, refresh: refreshChanges } = useProjectChanges({
     directory: activeDirectory,
     connected,
@@ -387,6 +402,15 @@ export default function App() {
     [selectedSessionId, sessions.data, visibleSessionData],
   );
   const activeSessionId = selectedSession?.id ?? null;
+  const activeAgent = useMemo(
+    () =>
+      resolveAgentName({
+        mode: agentMode,
+        agents: agents.data,
+        fallback: selectedSession?.agent,
+      }),
+    [agentMode, agents.data, selectedSession?.agent],
+  );
 
   useEffect(() => {
     activeViewRef.current = activeView;
@@ -416,6 +440,13 @@ export default function App() {
     setUiPrefs((previous) => normalizeUiPrefs({ ...previous, [key]: value }));
   }, []);
 
+  const handleChangeAgentMode = useCallback((mode) => {
+    setAgentMode((previous) => {
+      const next = storeAgentMode(mode);
+      return next === previous ? previous : next;
+    });
+  }, []);
+
   const handleNavigate = useCallback((view) => {
     const current = activeViewRef.current;
 
@@ -429,44 +460,59 @@ export default function App() {
       document.activeElement.blur();
     }
 
+    if (view !== "preview") {
+      setPreviewFullscreen(false);
+    }
+
     setActiveView(view);
     setMenuOpen(false);
   }, []);
 
   useEffect(() => {
     backHandlerRef.current = () => {
-      if (menuOpen) {
+      const modalOpen = Boolean(
+        document.querySelector(
+          '[role="dialog"][aria-modal="true"], [role="menu"]',
+        ),
+      );
+
+      const action = resolveBackAction({
+        menuOpen,
+        serverGateVisible: showServerGate,
+        modalOpen,
+        fullscreen: previewFullscreen,
+        activeView: activeViewRef.current,
+        hasDraft: Boolean(draft.trim()),
+      });
+
+      if (action === BACK_ACTIONS.CLOSE_MENU) {
         setMenuOpen(false);
         return;
       }
 
-      if (showServerGate) return;
+      if (action === BACK_ACTIONS.NONE) return;
 
-      const modalOpen = document.querySelector(
-        '[role="dialog"][aria-modal="true"], [role="menu"]',
-      );
-
-      if (modalOpen) {
+      if (action === BACK_ACTIONS.DISMISS_MODAL) {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
         return;
       }
 
-      if (activeViewRef.current !== "chat") {
+      if (action === BACK_ACTIONS.EXIT_FULLSCREEN) {
+        setPreviewFullscreen(false);
+        return;
+      }
+
+      if (action === BACK_ACTIONS.NAVIGATE_BACK) {
         const history = viewHistoryRef.current;
-        let target = null;
+        const target = previousView(history, activeViewRef.current) ?? "chat";
 
-        while (history.length > 0) {
-          const candidate = history.pop();
-          if (candidate && candidate !== activeViewRef.current) {
-            target = candidate;
-            break;
-          }
-        }
-
-        if (!target) target = "chat";
+        viewHistoryRef.current = history.filter(
+          (candidate) => candidate !== target,
+        );
 
         activeViewRef.current = target;
         setActiveView(target);
+        setPreviewFullscreen(false);
 
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
@@ -474,7 +520,7 @@ export default function App() {
         return;
       }
 
-      if (draft.trim()) {
+      if (action === BACK_ACTIONS.CLEAR_DRAFT) {
         setDraft("");
         return;
       }
@@ -898,6 +944,10 @@ export default function App() {
                 effectiveModel={effectiveModel}
                 modelLabel={modelLabel}
                 onOpenModels={() => handleNavigate("models")}
+                agentMode={agentMode}
+                onAgentModeChange={handleChangeAgentMode}
+                agentName={activeAgent}
+                agents={agents.data}
                 draft={draft}
                 onDraftChange={setDraft}
               />
@@ -949,6 +999,9 @@ export default function App() {
                 connected={connected}
                 active={activeView === "preview"}
                 onRunInTerminal={handleRunInTerminal}
+                onClose={() => handleNavigate("chat")}
+                fullscreen={previewFullscreen}
+                onFullscreenChange={setPreviewFullscreen}
               />
             </div>
 
@@ -970,6 +1023,7 @@ export default function App() {
                 onRenameSession={renameSession}
                 onArchiveSession={handleArchiveSession}
                 onDeleteSession={deleteSession}
+                onSessionsRefreshed={overview.refresh}
               />
             ) : null}
 
@@ -996,6 +1050,13 @@ export default function App() {
               />
             ) : null}
 
+            {activeView === "appearance" ? (
+              <AppearanceView
+                uiPrefs={uiPrefs}
+                onChangeUiPref={handleChangeUiPref}
+              />
+            ) : null}
+
             {activeView === "settings" ? (
               <SettingsView
                 health={health}
@@ -1010,11 +1071,7 @@ export default function App() {
                 onSelectWorkspace={handleSelectWorkspace}
                 onProjectsChanged={refreshProjects}
                 onProvidersChanged={resources.refresh}
-                uiPrefs={uiPrefs}
-                onChangeUiPref={handleChangeUiPref}
-                sessions={sessions}
-                selectedSessionId={activeSessionId}
-                onSessionsRefreshed={overview.refresh}
+                onOpenAppearance={() => handleNavigate("appearance")}
               />
             ) : null}
           </div>

@@ -2,32 +2,9 @@ import { useState } from "react";
 import { Browser } from "@capacitor/browser";
 import { CopyButton } from "./CopyButton";
 import { MarkdownText } from "./Markdown";
+import { ToolCard } from "./ToolCard";
 import { highlightCode } from "../lib/highlight";
 import { formatSessionTime } from "../lib/workspace";
-
-const TOOL_STATE = {
-  completed: "done",
-  error: "failed",
-  failed: "failed",
-  running: "running",
-  pending: "pending",
-};
-
-function toolStateClass(status) {
-  return TOOL_STATE[status] ?? "pending";
-}
-
-function ToolLine({ tool }) {
-  return (
-    <div className={`message-tool tool-${toolStateClass(tool.status)}`}>
-      <span className="tool-marker" aria-hidden="true" />
-      <span className="tool-name">{tool.name}</span>
-      {tool.title ? <span className="tool-title">{tool.title}</span> : null}
-      {tool.detail ? <code className="tool-detail">{tool.detail}</code> : null}
-      <span className="tool-status">{tool.status}</span>
-    </div>
-  );
-}
 
 function openLink(url) {
   Browser.open({ url }).catch(() => {});
@@ -158,7 +135,7 @@ export function MessageList({ messages, phase, resetKey }) {
           {message.tools.length > 0 ? (
             <div className="message-tools">
               {message.tools.map((tool, index) => (
-                <ToolLine
+                <ToolCard
                   key={tool.id ?? `${tool.name}-${tool.status}-${index}`}
                   tool={tool}
                 />

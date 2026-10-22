@@ -464,6 +464,27 @@ function validateAgent(agent) {
   return agent;
 }
 
+function normalizeAgent(agent) {
+  if (!agent || typeof agent !== "object") return null;
+  if (typeof agent.name !== "string" || !agent.name.trim()) return null;
+  if (!AGENT_ID_PATTERN.test(agent.name)) return null;
+
+  const mode =
+    agent.mode === "primary" || agent.mode === "subagent" || agent.mode === "all"
+      ? agent.mode
+      : "all";
+
+  return {
+    name: agent.name.trim(),
+    description:
+      typeof agent.description === "string"
+        ? agent.description.trim().slice(0, 400)
+        : "",
+    mode,
+    hidden: agent.hidden === true,
+  };
+}
+
 function validatePromptText(text) {
   if (typeof text !== "string" || !text.trim()) {
     throw invalidInput("Enter a prompt before sending.");
@@ -1406,6 +1427,24 @@ export function createOpenCodeApi(client = opencode) {
       return requireArray(data);
     },
 
+    async listAgents(directory, signal) {
+      const scope = validateProjectDirectory(directory);
+      const data = await runRequest(
+        client,
+        (currentClient, requestSignal) =>
+          currentClient.app.agents(
+            { directory: scope },
+            { signal: requestSignal },
+          ),
+        "Agents could not be loaded.",
+        signal,
+      );
+
+      return requireArray(data)
+        .map((agent) => normalizeAgent(agent))
+        .filter(Boolean);
+    },
+
     async getVcsStatus(directory, signal) {
       const scope = validateProjectDirectory(directory);
       const data = await runRequest(
@@ -1510,6 +1549,9 @@ export const sendPromptAsync = (directory, sessionID, options, signal) =>
 
 export const sendCommand = (directory, sessionID, options, signal) =>
   opencodeApi.sendCommand(directory, sessionID, options, signal);
+
+export const listAgents = (directory, signal) =>
+  opencodeApi.listAgents(directory, signal);
 
 export const runProjectShell = (directory, sessionID, options, signal) =>
   opencodeApi.runProjectShell(directory, sessionID, options, signal);

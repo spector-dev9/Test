@@ -20,6 +20,7 @@ const NAVIGATION = [
   { id: "sessions", label: "Sessions", icon: "▤" },
   { id: "models", label: "Models", icon: "⌁" },
   { id: "settings", label: "Settings", icon: "⚙" },
+  { id: "appearance", label: "Theme & Appearance", icon: "◐" },
 ];
 
 export function SidebarContent({

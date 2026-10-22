@@ -78,6 +78,8 @@ export function WorkspaceTabs({
             aria-selected={activeView === tab.id}
             className={`workspace-tab${activeView === tab.id ? " active" : ""}`}
             onClick={() => onNavigate(tab.id)}
+            title={tab.label}
+            aria-label={tab.label}
           >
             <span aria-hidden="true">{tab.icon}</span>
             {tab.label}

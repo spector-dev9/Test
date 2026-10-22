@@ -20,6 +20,7 @@ const INITIAL_STATE = Object.freeze({
   installed: false,
   running: false,
   url: "",
+  dataDirectory: "",
 });
 
 export function useLocalServer() {

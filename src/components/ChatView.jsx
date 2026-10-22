@@ -21,11 +21,19 @@ import {
   offlineTitle,
   parseComposerSubmission,
 } from "../lib/workspace";
+import {
+  AGENT_MODES,
+  agentModeDescription,
+  agentModeLabel,
+  availableAgentModes,
+  normalizeAgentMode,
+} from "../lib/agentMode.js";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { MessageList } from "./MessageList";
 import { PermissionPrompts } from "./PermissionPrompts";
 import { QuestionPrompts } from "./QuestionPrompts";
 import { TodoDialog } from "./TodoDialog";
+import { TodoPanel } from "./TodoPanel";
 
 const SUGGESTIONS = [
   "Explain this project and its main entry points.",
@@ -139,6 +147,10 @@ export function ChatView({
   effectiveModel,
   modelLabel,
   onOpenModels,
+  agentMode,
+  onAgentModeChange,
+  agentName,
+  agents,
   draft,
   onDraftChange,
 }) {
@@ -152,6 +164,9 @@ export function ChatView({
   const [attachments, setAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [todosOpen, setTodosOpen] = useState(false);
+  const [todoPanelOpen, setTodoPanelOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const lastSeenCountRef = useRef(0);
 
   const rows = useMemo(
     () => normalizeConversation(messages.data),
@@ -171,6 +186,13 @@ export function ChatView({
     phase === "sending" ||
     phase === "working" ||
     phase === "stopping";
+  const activeMode = normalizeAgentMode(agentMode);
+  const supportedModes = availableAgentModes(agents);
+  const modeLocked = phase === "sending" || phase === "working" || phase === "stopping";
+  const activeAgent = typeof agentName === "string" ? agentName.trim() : "";
+  const modeHint = activeAgent
+    ? `${activeAgent} agent`
+    : agentModeDescription(activeMode);
   const permissionPending = permissions.length > 0;
   const questionPending = questions.length > 0;
   const canSubmit =
@@ -199,14 +221,21 @@ export function ChatView({
 
   useEffect(() => {
     const previous = previousSessionRef.current;
-    if (previous !== (session?.id ?? null)) {
+    const changed = previous !== (session?.id ?? null);
+
+    if (changed) {
       onDraftChange("");
       setAttachments([]);
       setAttachmentError("");
       setTodosOpen(false);
+      setTodoPanelOpen(false);
+      setPendingCount(0);
+      setShowLatest(false);
     }
+
     previousSessionRef.current = session?.id ?? null;
     stickToBottomRef.current = true;
+    lastSeenCountRef.current = 0;
     requestAnimationFrame(() => scrollToLatest("auto"));
   }, [onDraftChange, scrollToLatest, session?.id]);
 
@@ -218,7 +247,15 @@ export function ChatView({
   }, [draft]);
 
   useEffect(() => {
-    if (!stickToBottomRef.current) return;
+    if (!stickToBottomRef.current) {
+      setPendingCount(
+        Math.max(0, rows.length - lastSeenCountRef.current),
+      );
+      return;
+    }
+
+    lastSeenCountRef.current = rows.length;
+    setPendingCount(0);
     scrollToLatest("auto");
   }, [
     rows,
@@ -268,12 +305,16 @@ export function ChatView({
     try {
       const payload =
         request.kind === "command"
-          ? { ...request, model: effectiveModel }
+          ? {
+              ...request,
+              model: effectiveModel,
+              agent: activeAgent || session?.agent || undefined,
+            }
           : {
               ...request,
               text: request.text || "Please review the attached image.",
               model: effectiveModel,
-              agent: session?.agent || undefined,
+              agent: activeAgent || session?.agent || undefined,
               attachments: attachments.map(({ mime, filename, url }) => ({
                 mime,
                 filename,
@@ -368,6 +409,12 @@ export function ChatView({
       element.scrollHeight - element.scrollTop - element.clientHeight;
     const nearBottom = distance < 80;
     stickToBottomRef.current = nearBottom;
+
+    if (nearBottom) {
+      lastSeenCountRef.current = rows.length;
+      setPendingCount(0);
+    }
+
     setShowLatest(!nearBottom && rows.length > 0);
   }
 
@@ -403,7 +450,7 @@ export function ChatView({
             </h1>
             <p className="subtitle">
               {session
-                ? `${session.agent || "agent"} · messages stay on your local server`
+                ? `${activeMode === "plan" ? "Plan" : "Build"} mode · ${modeHint} · messages stay on your local server`
                 : "Your coding agent, in a workspace of your own."}
             </p>
           </div>
@@ -412,8 +459,8 @@ export function ChatView({
               <button
                 type="button"
                 className="model-pill todo-trigger"
-                onClick={() => setTodosOpen(true)}
-                title="Open the session todo list"
+                onClick={() => setTodoPanelOpen((value) => !value)}
+                title="Show the session task list"
               >
                 ☑ {todos.filter((todo) => todo.status === "completed").length}/
                 {todos.length}
@@ -552,10 +599,26 @@ export function ChatView({
             type="button"
             className="jump-latest"
             onClick={() => scrollToLatest("smooth")}
+            aria-label={
+              pendingCount > 0
+                ? `Jump to the latest message, ${pendingCount} new`
+                : "Jump to the latest message"
+            }
           >
             ↓ Latest
+            {pendingCount > 0 ? (
+              <span className="jump-latest-count">{pendingCount}</span>
+            ) : null}
           </button>
         ) : null}
+
+        <TodoPanel
+          todos={todos}
+          error={todoError}
+          open={todoPanelOpen}
+          onToggle={() => setTodoPanelOpen((value) => !value)}
+          onOpenAll={() => setTodosOpen(true)}
+        />
 
         <PermissionPrompts
           permissions={permissions}
@@ -684,6 +747,36 @@ export function ChatView({
           />
           <div className="composer-footer">
             <div className="composer-meta">
+              <div
+                className="agent-mode-switch"
+                role="group"
+                aria-label="Agent mode"
+              >
+                {AGENT_MODES.map((mode) => {
+                  const unavailable =
+                    supportedModes.length > 0 &&
+                    !supportedModes.includes(mode);
+                  const selected = mode === activeMode;
+
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`agent-mode-option${selected ? " active" : ""}`}
+                      aria-pressed={selected}
+                      title={
+                        unavailable
+                          ? `${agentModeLabel(mode)} mode is not configured on this server`
+                          : agentModeDescription(mode)
+                      }
+                      disabled={modeLocked || unavailable}
+                      onClick={() => onAgentModeChange?.(mode)}
+                    >
+                      {agentModeLabel(mode)}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 type="button"
                 className="composer-attach"

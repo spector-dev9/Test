@@ -8,6 +8,7 @@ export const VIEW_IDS = Object.freeze([
   "sessions",
   "models",
   "settings",
+  "appearance",
 ]);
 
 export const PRIMARY_VIEW_IDS = Object.freeze([

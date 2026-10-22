@@ -156,6 +156,298 @@ public class GitHubPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void initRepository(PluginCall call) {
+        String directory = call.getString("directory");
+        String branch = call.getString("branch");
+        String remote = call.getString("remote");
+        File repository = resolveDirectory(directory);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        String branchName = branch == null || branch.trim().isEmpty()
+            ? "main"
+            : branch.trim();
+
+        if (!isValidBranch(branchName)) {
+            call.reject("The branch name is invalid.");
+            return;
+        }
+
+        String remoteUrl = remote == null ? "" : remote.trim();
+
+        if (!remoteUrl.isEmpty() && !isValidRemote(remoteUrl)) {
+            call.reject("The remote address must be an HTTPS URL.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult inside = runGit(repository, Arrays.asList(
+                    "rev-parse",
+                    "--is-inside-work-tree"
+                ));
+
+                if (inside.exitCode == 0 && "true".equals(inside.output.trim())) {
+                    reject(call, "This folder is already inside a Git repository.", null);
+                    return;
+                }
+
+                ProcessResult init = runGit(repository, Arrays.asList("init", "-b", branchName));
+
+                if (init.exitCode != 0) {
+                    reject(call, init.output, null);
+                    return;
+                }
+
+                if (!remoteUrl.isEmpty()) {
+                    ProcessResult addRemote = runGit(repository, Arrays.asList(
+                        "remote",
+                        "add",
+                        "origin",
+                        remoteUrl
+                    ));
+
+                    if (addRemote.exitCode != 0) {
+                        reject(call, addRemote.output, null);
+                        return;
+                    }
+                }
+
+                JSObject result = repositoryStatus(repository);
+                result.put("output", sanitize(init.output, null));
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, null);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void fetchRepository(PluginCall call) {
+        String directory = call.getString("directory");
+        String token = normalizeToken(call.getString("token"));
+        File repository = resolveDirectory(directory);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult remote = runGit(repository, Arrays.asList(
+                    "remote",
+                    "get-url",
+                    "origin"
+                ));
+
+                if (remote.exitCode != 0) {
+                    reject(call, "This repository has no origin remote.", token);
+                    return;
+                }
+
+                String url = remote.output.trim();
+                List<String> arguments = new ArrayList<>();
+                arguments.add("fetch");
+                arguments.add("--prune");
+
+                if (token != null && !token.isEmpty() && url.startsWith("https://")) {
+                    arguments.add(authenticatedUrl(url, token));
+                    arguments.add("origin");
+                } else {
+                    arguments.add("origin");
+                }
+
+                ProcessResult fetch = runGit(repository, arguments);
+
+                if (fetch.exitCode != 0) {
+                    reject(call, fetch.output, token);
+                    return;
+                }
+
+                JSObject result = repositoryStatus(repository);
+                result.put("output", sanitize(fetch.output, token));
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, token);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void pullRepository(PluginCall call) {
+        String directory = call.getString("directory");
+        String token = normalizeToken(call.getString("token"));
+        File repository = resolveDirectory(directory);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult status = runGit(repository, Arrays.asList(
+                    "status",
+                    "--porcelain=v1"
+                ));
+
+                if (status.exitCode != 0) {
+                    reject(call, "This folder is not a Git repository.", token);
+                    return;
+                }
+
+                if (!status.output.trim().isEmpty()) {
+                    reject(call, "Commit or stash the local changes before pulling.", token);
+                    return;
+                }
+
+                ProcessResult remote = runGit(repository, Arrays.asList(
+                    "remote",
+                    "get-url",
+                    "origin"
+                ));
+
+                if (remote.exitCode != 0) {
+                    reject(call, "This repository has no origin remote.", token);
+                    return;
+                }
+
+                String url = remote.output.trim();
+                List<String> arguments = new ArrayList<>();
+                arguments.add("pull");
+                arguments.add("--ff-only");
+
+                if (token != null && !token.isEmpty() && url.startsWith("https://")) {
+                    arguments.add(authenticatedUrl(url, token));
+                    arguments.add("origin");
+                } else {
+                    arguments.add("origin");
+                }
+
+                ProcessResult pull = runGit(repository, arguments);
+
+                if (pull.exitCode != 0) {
+                    reject(call, pull.output, token);
+                    return;
+                }
+
+                JSObject result = repositoryStatus(repository);
+                result.put("output", sanitize(pull.output, token));
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, token);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void listBranches(PluginCall call) {
+        String directory = call.getString("directory");
+        File repository = resolveDirectory(directory);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult branches = runGit(repository, Arrays.asList(
+                    "branch",
+                    "--format=%(refname:short)"
+                ));
+
+                if (branches.exitCode != 0) {
+                    reject(call, "This folder is not a Git repository.", null);
+                    return;
+                }
+
+                JSArray names = new JSArray();
+                String current = "";
+
+                for (String line : branches.output.split("\n")) {
+                    String name = line.trim();
+                    if (name.isEmpty()) continue;
+                    names.put(name);
+                }
+
+                ProcessResult head = runGit(repository, Arrays.asList(
+                    "symbolic-ref",
+                    "--short",
+                    "HEAD"
+                ));
+
+                if (head.exitCode == 0) {
+                    current = head.output.trim();
+                }
+
+                JSObject result = new JSObject();
+                result.put("branches", names);
+                result.put("current", current);
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, null);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void checkoutBranch(PluginCall call) {
+        String directory = call.getString("directory");
+        String branch = call.getString("branch");
+        File repository = resolveDirectory(directory);
+
+        if (repository == null) {
+            call.reject("The repository directory is invalid.");
+            return;
+        }
+
+        if (branch == null || !isValidBranch(branch.trim())) {
+            call.reject("The branch name is invalid.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                ProcessResult status = runGit(repository, Arrays.asList(
+                    "status",
+                    "--porcelain=v1"
+                ));
+
+                if (status.exitCode != 0) {
+                    reject(call, "This folder is not a Git repository.", null);
+                    return;
+                }
+
+                if (!status.output.trim().isEmpty()) {
+                    reject(call, "Commit or stash the local changes before switching branches.", null);
+                    return;
+                }
+
+                ProcessResult checkout = runGit(repository, Arrays.asList(
+                    "checkout",
+                    branch.trim()
+                ));
+
+                if (checkout.exitCode != 0) {
+                    reject(call, checkout.output, null);
+                    return;
+                }
+
+                JSObject result = repositoryStatus(repository);
+                result.put("output", sanitize(checkout.output, null));
+                finish(call, result);
+            } catch (Exception failure) {
+                reject(call, failure, null);
+            }
+        });
+    }
+
+    @PluginMethod
     public void commitAndPush(PluginCall call) {
         String directory = call.getString("directory");
         String message = call.getString("message");
@@ -538,6 +830,17 @@ public class GitHubPlugin extends Plugin {
         if (branch == null || branch.length() > 200) return false;
         if (branch.contains("..")) return false;
         return branch.matches("^[A-Za-z0-9._/-]+$");
+    }
+
+    private boolean isValidRemote(String value) {
+        try {
+            URI uri = new URI(value);
+            return "https".equalsIgnoreCase(uri.getScheme()) &&
+                uri.getHost() != null &&
+                uri.getUserInfo() == null;
+        } catch (Exception failure) {
+            return false;
+        }
     }
 
     private File resolveDirectory(String value) {

@@ -28,17 +28,8 @@ import {
   describeServer,
   offlineLabel,
 } from "../lib/workspace";
-import { UI_PREF_LIMITS, normalizeUiPrefs } from "../lib/uiPrefs";
+import { normalizeUiPrefs } from "../lib/uiPrefs";
 import { copyText } from "../lib/clipboard";
-import {
-  exportSessionToFile,
-  formatTransferBytes,
-  importSessionFromFile,
-  isSessionTransferSupported,
-  pickSessionExportTarget,
-  pickSessionImportFile,
-  sessionExportFileName,
-} from "../lib/sessionTransfer";
 import { DetailRow } from "./DetailRow";
 import { GitHubCard } from "./GitHubCard";
 
@@ -77,11 +68,7 @@ export function SettingsView({
   onSelectWorkspace,
   onProjectsChanged,
   onProvidersChanged,
-  uiPrefs,
-  onChangeUiPref,
-  sessions,
-  selectedSessionId,
-  onSessionsRefreshed,
+  onOpenAppearance,
 }) {
   const native = Capacitor.isNativePlatform();
   const storageSupported = isStorageSupported();
@@ -108,11 +95,6 @@ export function SettingsView({
   const [linuxPkg, setLinuxPkg] = useState("");
   const [rootfsPath, setRootfsPath] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
-  const [transferSessionId, setTransferSessionId] = useState(
-    () => selectedSessionId || "",
-  );
-  const [transferBusy, setTransferBusy] = useState("");
-  const [transferStatus, setTransferStatus] = useState(null);
 
   useEffect(() => {
     if (!storageSupported) return undefined;
@@ -183,7 +165,7 @@ export function SettingsView({
     if (!pkg) return;
     setLinuxBusy(true);
     try {
-      const result = await installLinuxPackage(pkg);
+      const result = await installLinuxPackage(pkg, project?.worktree);
       setLinuxOutput((previous) =>
         previous + `$ apk add ${pkg}\n${result.output}\n`
       );
@@ -266,7 +248,7 @@ export function SettingsView({
     runtime.repair();
   }
 
-  const prefs = normalizeUiPrefs(uiPrefs);
+  const prefs = normalizeUiPrefs();
 
   async function copyDiagnostics() {
     const lines = [
@@ -299,7 +281,7 @@ export function SettingsView({
           : "unknown"
       }`,
       `linux: ${linuxReady ? "ready" : "not ready"}`,
-      `ui: fontScale=${prefs.fontScale}% reduceMotion=${prefs.reducedMotion} terminal=${prefs.terminalFontSize}px editor=${prefs.editorFontSize}px`,
+      `ui: fontScale=${prefs.fontScale}% theme=${prefs.theme} font=${prefs.fontFamily} reduceMotion=${prefs.reducedMotion} terminal=${prefs.terminalFontSize}px editor=${prefs.editorFontSize}px`,
       `user-agent: ${
         typeof navigator === "undefined" ? "unknown" : navigator.userAgent
       }`,
@@ -309,72 +291,6 @@ export function SettingsView({
     await copyText(lines.join("\n"));
     setDiagnosticsCopied(true);
     setTimeout(() => setDiagnosticsCopied(false), 1500);
-  }
-
-  const sessionOptions = Array.isArray(sessions?.data) ? sessions.data : [];
-  const effectiveTransferId = sessionOptions.some(
-    (session) => session.id === transferSessionId,
-  )
-    ? transferSessionId
-    : sessionOptions[0]?.id || "";
-
-  async function exportSelectedSession() {
-    const session = sessionOptions.find(
-      (candidate) => candidate.id === effectiveTransferId,
-    );
-    if (!session || transferBusy) return;
-
-    setTransferBusy("export");
-    setTransferStatus(null);
-    try {
-      const target = await pickSessionExportTarget(sessionExportFileName(session));
-      if (!target) {
-        setTransferStatus({ text: "Export cancelled.", error: false });
-        return;
-      }
-      const { bytes } = await exportSessionToFile({
-        sessionID: session.id,
-        uri: target.uri,
-      });
-      setTransferStatus({
-        text: `Exported ${formatTransferBytes(bytes)} to ${target.name}.`,
-        error: false,
-      });
-    } catch (failure) {
-      setTransferStatus({
-        text: failure?.message || "The session could not be exported.",
-        error: true,
-      });
-    } finally {
-      setTransferBusy("");
-    }
-  }
-
-  async function importSessionFile() {
-    if (transferBusy) return;
-
-    setTransferBusy("import");
-    setTransferStatus(null);
-    try {
-      const file = await pickSessionImportFile();
-      if (!file) {
-        setTransferStatus({ text: "Import cancelled.", error: false });
-        return;
-      }
-      const { output } = await importSessionFromFile({ uri: file.uri });
-      if (typeof onSessionsRefreshed === "function") onSessionsRefreshed();
-      setTransferStatus({
-        text: `${output || "Session imported."} If it does not appear right away, restart the local server.`,
-        error: false,
-      });
-    } catch (failure) {
-      setTransferStatus({
-        text: failure?.message || "The session could not be imported.",
-        error: true,
-      });
-    } finally {
-      setTransferBusy("");
-    }
   }
 
   return (
@@ -476,166 +392,22 @@ export function SettingsView({
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">APPEARANCE</span>
-                <h2>Comfort and layout</h2>
+                <h2>Theme and typography</h2>
               </div>
-            </div>
-
-          <div className="appearance-list">
-            <label className="appearance-row appearance-row-toggle">
-              <span className="appearance-copy">
-                <strong>Reduce motion</strong>
-                <small>Cuts animations and pulsing effects across the app.</small>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                checked={prefs.reducedMotion}
-                onChange={(event) =>
-                  onChangeUiPref("reducedMotion", event.target.checked)
-                }
-              />
-            </label>
-
-            <label className="appearance-row">
-              <span className="appearance-copy">
-                <strong>Text size</strong>
-                <small>Scales the whole interface.</small>
-              </span>
-              <input
-                type="range"
-                min={UI_PREF_LIMITS.fontScale.min}
-                max={UI_PREF_LIMITS.fontScale.max}
-                step={UI_PREF_LIMITS.fontScale.step}
-                value={prefs.fontScale}
-                onChange={(event) =>
-                  onChangeUiPref("fontScale", Number(event.target.value))
-                }
-                aria-label="Interface text size"
-              />
-              <output className="appearance-value">{prefs.fontScale}%</output>
-            </label>
-
-            <label className="appearance-row">
-              <span className="appearance-copy">
-                <strong>Terminal font</strong>
-                <small>Text size in the interactive shell.</small>
-              </span>
-              <input
-                type="range"
-                min={UI_PREF_LIMITS.terminalFontSize.min}
-                max={UI_PREF_LIMITS.terminalFontSize.max}
-                step={UI_PREF_LIMITS.terminalFontSize.step}
-                value={prefs.terminalFontSize}
-                onChange={(event) =>
-                  onChangeUiPref("terminalFontSize", Number(event.target.value))
-                }
-                aria-label="Terminal font size"
-              />
-              <output className="appearance-value">
-                {prefs.terminalFontSize}px
-              </output>
-            </label>
-
-            <label className="appearance-row">
-              <span className="appearance-copy">
-                <strong>Editor font</strong>
-                <small>Text size in the file editor and preview.</small>
-              </span>
-              <input
-                type="range"
-                min={UI_PREF_LIMITS.editorFontSize.min}
-                max={UI_PREF_LIMITS.editorFontSize.max}
-                step={UI_PREF_LIMITS.editorFontSize.step}
-                value={prefs.editorFontSize}
-                onChange={(event) =>
-                  onChangeUiPref("editorFontSize", Number(event.target.value))
-                }
-                aria-label="Editor font size"
-              />
-              <output className="appearance-value">
-                {prefs.editorFontSize}px
-              </output>
-            </label>
-          </div>
-
-          <p className="panel-note">
-            Preferences are stored on this device only. The terminal and editor
-            sizes are applied live without restarting the session.
-          </p>
-        </div>
-
-        {native && isSessionTransferSupported() ? (
-          <div className="panel settings-card">
-            <div className="panel-heading">
-              <div>
-                <span className="panel-kicker">SESSIONS</span>
-                <h2>Import and export</h2>
-              </div>
-            </div>
-
-            {sessionOptions.length > 0 ? (
-              <>
-                <label
-                  className="appearance-copy"
-                  htmlFor="session-transfer-select"
-                >
-                  <strong>Session to export</strong>
-                  <small>
-                    Saves the conversation as OpenCode JSON, the same format the
-                    opencode export command produces.
-                  </small>
-                </label>
-                <select
-                  id="session-transfer-select"
-                  className="linux-input-field session-transfer-select"
-                  value={effectiveTransferId}
-                  onChange={(event) => setTransferSessionId(event.target.value)}
-                >
-                  {sessionOptions.map((session) => (
-                    <option key={session.id} value={session.id}>
-                      {session.title || session.slug || session.id}
-                    </option>
-                  ))}
-                </select>
-              </>
-            ) : (
-              <p className="panel-note">No sessions to export yet.</p>
-            )}
-
-            <div className="settings-runtime-actions">
               <button
                 type="button"
-                className="primary-button"
-                onClick={exportSelectedSession}
-                disabled={Boolean(transferBusy) || !effectiveTransferId}
+                className="secondary-button compact-button"
+                onClick={onOpenAppearance}
               >
-                {transferBusy === "export" ? "Exporting…" : "Export session"}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={importSessionFile}
-                disabled={Boolean(transferBusy)}
-              >
-                {transferBusy === "import" ? "Importing…" : "Import session"}
+                Open
               </button>
             </div>
-
-            {transferStatus ? (
-              <p
-                className="panel-note"
-                role={transferStatus.error ? "alert" : "status"}
-              >
-                {transferStatus.text}
-              </p>
-            ) : null}
-
             <p className="panel-note">
-              Export opens the system file saver; import opens a JSON file
-              created by export. Files are read and written on this device only.
+              Accent theme, interface font, text size, terminal and editor
+              sizes, and motion settings live in their own screen so this page
+              stays focused on the runtime.
             </p>
           </div>
-        ) : null}
 
         {native ? (
           <div className="panel settings-card">
@@ -761,6 +533,12 @@ export function SettingsView({
                   {runtime?.workspace || projectPathLabel(project)}
                 </code>
               </DetailRow>
+              <DetailRow label="Session store">
+                <code>
+                  {runtime?.dataDirectory ||
+                    "App-private storage for this app"}
+                </code>
+              </DetailRow>
             </dl>
 
             {runtimeBusy ? (
@@ -828,9 +606,13 @@ export function SettingsView({
             {logs ? <pre className="settings-log">{logs}</pre> : null}
 
             <p className="panel-note">
-              The runtime and workspace live in app-private storage. Provider
-              credentials are only stored in that local runtime; this app does
-              not read credentials from outside its sandbox.
+              This app always talks to its own server on{" "}
+              <code>127.0.0.1:4097</code>, whose sessions, projects, and
+              provider credentials live in app-private storage. Another
+              OpenCode server on this device (for example the one running in
+              Termux on port 4096) keeps a separate session store, so its
+              conversations are not listed here. Use Sessions → Import and
+              export to move a conversation between the two.
             </p>
           </div>
         ) : null}
