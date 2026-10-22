@@ -171,3 +171,65 @@ Unchanged: the always-on local OpenCode server. CPU, memory and device temperatu
 - Libraries: new `agentMode`, `navigation`, `todos`, `tools`; extended `workspace`, `uiPrefs`, `views`, `github`, `opencode`, `linuxEnvironment`.
 - Native: `LinuxEnvironment` (workspace binding), `GitHubPlugin` (five new Git operations), `LocalServerManager` (buffered log writer, session-store path).
 - **No commit, push, or publish was performed as part of the audit itself.**
+
+---
+
+## 9. Continued work from inside the app (round two)
+
+The second round ran **inside the app itself**: the session was imported into
+the app, the repository was cloned into the app workspace with the bundled
+git, and the Alpine environment was used as the build environment.
+
+### 9.1 Verified on device, not just in CI
+
+| Capability | Where it came from | Result |
+| --- | --- | --- |
+| Node.js 22.23.2 / npm 10.9.1 | bundled Alpine rootfs | working |
+| apk 2.14.4 | bundled Alpine rootfs | working |
+| Alpine 3.20.3 with the project mounted at the same path | PRoot | working |
+| `npm ci` + `npm run lint` + `npm test` + `npm run build` | guest toolchain | 191 tests pass, build ok |
+| `javac` against platform-36 `android.jar` | JDK 17 installed in the guest | Android sources compile |
+| GitHub Actions run status | public API from the app | readable without a token |
+
+### 9.2 Rendering failures no longer blank the app
+
+The imported session exposed the real failure mode: one malformed message
+crashed the whole WebView. Upstream fixed the specific parser bug (markdown
+table cells were raw strings where the renderer expected inline nodes); this
+round added the missing defence:
+
+- `src/components/ErrorBoundary.jsx` wraps every workspace view **and every
+  single message**, so a bad message shows an inline "Try again" row instead
+  of taking the conversation down.
+- `src/main.jsx` registers `onUncaughtError` / `onCaughtError`, so a failure
+  outside the React tree shows a reload panel instead of an empty page.
+- `src/lib/errors.js` holds the fallback copy and is covered by tests.
+- `src/lib/markdown.test.js` now walks every block type and asserts the
+  parser output matches the renderer contract — the exact class of mismatch
+  that caused the blank screen.
+
+### 9.3 The terminal can now run the Alpine environment
+
+The local server's terminal API accepts a custom command, so the terminal
+offers two shells:
+
+- **Host** — the app sandbox (previous behaviour, always available).
+- **Alpine** — the bundled PRoot userspace with `node`, `npm`, `apk`, and
+  the project folder mounted at the same path as the agent's workspace.
+
+The native `guestShell` method returns the exact PRoot command, the working
+directory, and a clean guest environment, so the shell, the agent, and the
+one-shot Alpine panel all share one setup. The shell request is validated
+(`normalizeShellRequest`) before it reaches the server: absolute paths only,
+bounded argument and environment lists, no control characters.
+
+Verified on device with the real binary: the guest shell reports the Alpine
+`PATH`, `node -v` → 22.23.2, `npm -v` → 10.9.1, `apk --version` → 2.14.4,
+and the workspace `node_modules` is visible.
+
+### 9.4 Build environment inside the app
+
+The Alpine environment now carries a JDK and curl, so the Android sources can
+be compiled on the phone (`javac` against the platform-36 `android.jar`
+with small Capacitor stubs). That check caught two real compile errors in the
+new native code before it ever reached CI.
