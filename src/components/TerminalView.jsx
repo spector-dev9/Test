@@ -400,10 +400,15 @@ export function TerminalView({
     setLinuxError("");
 
     try {
-      await ensureLinuxEnvironment();
+      const result = await ensureLinuxEnvironment();
       await checkLinux();
       setLinuxOutput(
-        (previous) => previous + "Alpine environment prepared.\n",
+        (previous) =>
+          previous +
+          "Alpine environment prepared.\n" +
+          (result?.nodeReady === false
+            ? "Node.js could not be installed automatically; run apk add nodejs npm.\n"
+            : ""),
       );
     } catch (failure) {
       setLinuxError(

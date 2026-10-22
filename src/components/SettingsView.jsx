@@ -156,11 +156,16 @@ export function SettingsView({
     setLinuxBusy(true);
     setLinuxOutput("");
     try {
-      await ensureLinuxEnvironment();
+      const result = await ensureLinuxEnvironment();
       const ready = await isLinuxEnvironmentReady();
       setLinuxReady(Boolean(ready?.ready));
       setLinuxReason(ready?.ready ? "" : ready?.reason || "");
-      setLinuxOutput((previous) => previous + "Linux environment ready.\n");
+      setLinuxOutput((previous) =>
+        previous +
+        (result?.nodeReady === false
+          ? "Linux environment ready. Node.js could not be installed automatically; run apk add nodejs npm in the Linux terminal.\n"
+          : "Linux environment ready.\n"),
+      );
     } catch (failure) {
       setLinuxOutput((previous) => previous + `Error: ${failure.message}\n`);
     } finally {

@@ -101,10 +101,17 @@ public class LinuxEnvironment extends Plugin {
                     Log.w(TAG, "Could not add the Node.js package repository.", failure);
                 }
                 ensureProot();
+                boolean nodeReady = false;
+                try {
+                    nodeReady = ensureNode();
+                } catch (Exception failure) {
+                    Log.w(TAG, "Could not install Node.js.", failure);
+                }
                 writeResolv(rootfs);
                 writeText(new File(rootfs, MARKER_READY), "1\n");
                 JSObject result = new JSObject();
                 result.put("ready", true);
+                result.put("nodeReady", nodeReady);
                 result.put("rootfsPath", rootfs.getAbsolutePath());
                 result.put("prootPath", prootPath().getAbsolutePath());
                 finish(call, result);
@@ -318,6 +325,31 @@ public class LinuxEnvironment extends Plugin {
                 deleteRecursively(entry);
             }
         }
+    }
+
+    private boolean ensureNode() throws Exception {
+        ProcessResult check = runLinuxCommand("node -v && npm -v", null);
+        if (check.exitCode == 0) {
+            String nodeVersion = "";
+            for (String line : check.output.split("\n")) {
+                if (line.startsWith("v")) {
+                    nodeVersion = line.trim();
+                    break;
+                }
+            }
+            // Node.js 20 is too old for npm to resolve optional dependencies
+            // that require ^20.19 or newer (Vite 8, ESLint 10, and friends).
+            if (nodeVersion.matches("v(2[2-9]|[3-9][0-9])\\..*")) {
+                return true;
+            }
+        }
+        ProcessResult result = runLinuxCommand(
+            "apk add --no-cache -u nodejs npm", null);
+        if (result.exitCode == 0 || allPackagesInstalled("nodejs npm")) {
+            return true;
+        }
+        Log.w(TAG, "apk could not install Node.js: " + result.output);
+        return false;
     }
 
     private void ensureProot() throws IOException {
