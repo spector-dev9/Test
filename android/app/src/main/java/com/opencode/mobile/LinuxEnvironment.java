@@ -93,7 +93,13 @@ public class LinuxEnvironment extends Plugin {
         executor.execute(() -> {
             try {
                 File rootfs = ensureRootfs();
-                configurePackageRepository(rootfs);
+                try {
+                    configurePackageRepository(rootfs);
+                } catch (IOException failure) {
+                    // The base environment is still usable without this; Node.js
+                    // can then be installed from the v3.21 branch by hand.
+                    Log.w(TAG, "Could not add the Node.js package repository.", failure);
+                }
                 ensureProot();
                 writeResolv(rootfs);
                 writeText(new File(rootfs, MARKER_READY), "1\n");
@@ -339,6 +345,11 @@ public class LinuxEnvironment extends Plugin {
         File repositories = new File(rootfs, "etc/apk/repositories");
         if (!repositories.isFile()) {
             return;
+        }
+        // The bundled minirootfs ships this file as 0444. The app owns it, so
+        // it can grant itself write access before appending.
+        if (!repositories.canWrite() && !repositories.setWritable(true, true)) {
+            throw new IOException("The Alpine package list is read-only.");
         }
         String current = new String(
             Files.readAllBytes(repositories.toPath()),
