@@ -52,7 +52,11 @@ function reportFatal(error) {
 
 createRoot(container, {
   onUncaughtError: reportFatal,
-  onCaughtError: reportFatal,
+  onCaughtError(error, errorInfo) {
+    if (typeof console !== "undefined" && console.error) {
+      console.error("A view could not be rendered", error, errorInfo);
+    }
+  },
 }).render(
   <StrictMode>
     <App />

@@ -422,6 +422,40 @@ export function TerminalView({
     }
   }
 
+  const resolveShellOptions = useCallback(async () => {
+    if (shellMode !== "alpine") return { options: {} };
+
+    try {
+      const shell = await linuxGuestShell(directory);
+
+      if (!shell.command || shell.args.length === 0) {
+        throw new Error("The Alpine shell could not be prepared.");
+      }
+
+      setShellError("");
+      return {
+        options: {
+          command: shell.command,
+          args: [...shell.args, "/bin/ash", "-l"],
+          cwd: shell.cwd || directory,
+          env: shell.env,
+        },
+      };
+    } catch (failure) {
+      const message =
+        failure?.message || "The Alpine shell could not be started.";
+      setShellError(message);
+      return { options: null, error: message };
+    }
+  }, [directory, shellMode]);
+
+  const changeShellMode = useCallback((mode) => {
+    setShellMode((current) => (current === mode ? current : mode));
+    setShellError("");
+    // A different shell needs its own session.
+    setActivePtyId(null);
+  }, []);
+
   useEffect(() => {
     if (!enabled || !connected) return undefined;
 
@@ -657,40 +691,6 @@ export function TerminalView({
     }
   }
 
-
-  const resolveShellOptions = useCallback(async () => {
-    if (shellMode !== "alpine") return { options: {} };
-
-    try {
-      const shell = await linuxGuestShell(directory);
-
-      if (!shell.command || shell.args.length === 0) {
-        throw new Error("The Alpine shell could not be prepared.");
-      }
-
-      setShellError("");
-      return {
-        options: {
-          command: shell.command,
-          args: [...shell.args, "/bin/ash", "-l"],
-          cwd: shell.cwd || directory,
-          env: shell.env,
-        },
-      };
-    } catch (failure) {
-      const message =
-        failure?.message || "The Alpine shell could not be started.";
-      setShellError(message);
-      return { options: null, error: message };
-    }
-  }, [directory, shellMode]);
-
-  const changeShellMode = useCallback((mode) => {
-    setShellMode((current) => (current === mode ? current : mode));
-    setShellError("");
-    // A different shell needs its own session.
-    setActivePtyId(null);
-  }, []);
 
   async function runLinux() {
     if (!linuxCommand.trim() || linuxRunning) return;
