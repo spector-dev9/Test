@@ -71,6 +71,21 @@ test("supports ordered and unordered lists", () => {
   assert.equal(numbered.ordered, true);
 });
 
+test("parses table cells as inline nodes", () => {
+  const [table] = parseMarkdown(
+    "| a | **b** |\n| - | - |\n| [x](https://x.test) | `c` |",
+  );
+
+  assert.equal(table.type, "table");
+  assert.deepEqual(table.header, [
+    [{ type: "text", value: "a" }],
+    [{ type: "strong", children: [{ type: "text", value: "b" }] }],
+  ]);
+  assert.equal(table.rows[0][0][0].type, "link");
+  assert.equal(table.rows[0][1][0].type, "code");
+  assert.equal(table.rows[0][1][0].value, "c");
+});
+
 test("quote blocks nest parsed markdown", () => {
   const [quote] = parseMarkdown("> # inside");
   assert.equal(quote.type, "quote");

@@ -317,7 +317,7 @@ function parseList(lines, start) {
 }
 
 function parseTable(lines, start) {
-  const header = splitTableRow(lines[start]);
+  const header = splitTableRow(lines[start]).map((cell) => parseInline(cell));
   const alignCells = splitTableRow(lines[start + 1]);
   const align = alignCells.map((cell) => {
     const left = cell.startsWith(":");
@@ -337,7 +337,7 @@ function parseTable(lines, start) {
     lines[i].includes("|") &&
     !isBlockStart(lines, i)
   ) {
-    rows.push(splitTableRow(lines[i]));
+    rows.push(splitTableRow(lines[i]).map((cell) => parseInline(cell)));
     i += 1;
   }
 
